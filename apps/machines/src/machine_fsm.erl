@@ -114,20 +114,16 @@ cooking(info, {cooking_done, Order}, State) ->
         upgrade_level => maps:get(upgrade_level, State),
         current_order => undefined
     }),
-    %todo - add to task queue
-    %simulation
+    % Add delivery task to waiter queue
     case Order of
-        #{table_id := TableId, client_id := CustomerId} -> % <--- וודא שאתה מקבל גם את client_id מה-Order
-            io:format("[machine_fsm] Delivering order ~p to customer ~p (table ~p)~n", [Order, CustomerId, TableId]),
-            % שלח הודעה ישירות ל-customer_fsm הרשום גלובלית
-            gen_statem:cast({global, {customer_fsm, CustomerId}}, food_arrived), % <--- שינוי קריטי!
-            io:format("[machine_fsm] Sent food_arrived message to customer ~p.~n", [CustomerId]); % <--- הודעת דיבוג
+        #{table_id := TableId, client_id := CustomerId} ->
+            Task = {deliver_food, TableId, CustomerId, Order},
+            task_registry:request_task(Task),
+            io:format("[machine_fsm] Added delivery task to waiter queue for customer ~p at table ~p~n", [CustomerId, TableId]);
         _ ->
             io:format("[machine_fsm] Invalid order format or missing customer_id in order: ~p~n", [Order])
     end,
     {next_state, idle, NewState};
-    %end simulation
-
 
 cooking(cast, upgrade, State) ->
     % Allow upgrade during processing; will affect next order

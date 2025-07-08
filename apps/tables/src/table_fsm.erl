@@ -95,9 +95,15 @@ code_change(_OldVsn, State, Data, _Extra) -> %otp function
 idle(cast, {seat_customer, CustomerId}, State) -> %customer get to the table to seat
     TableId = maps:get(table_id, State),
     io:format("[table_fsm] Customer ~p seated at table ~p~n", [CustomerId, TableId]),
-     gen_statem:cast({global, {customer_fsm, CustomerId}}, {assign_table, TableId}), %% ←update customer about the table
+    gen_statem:cast({global, {customer_fsm, CustomerId}}, {assign_table, TableId}), %% ←update customer about the table
     NewState = State#{customer_id => CustomerId},
     table_sup:update_table_state(TableId, #{state => taken, customer_id => CustomerId}),
+    
+    % Request waiter to take order
+    Task = {take_order, TableId, CustomerId},
+    task_registry:request_task(Task),
+    io:format("[table_fsm] Requested waiter to take order from customer ~p at table ~p~n", [CustomerId, TableId]),
+    
     {next_state, taken, NewState};
 
 

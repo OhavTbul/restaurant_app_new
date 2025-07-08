@@ -1,8 +1,11 @@
 {application,customers,
-             [{description,"Customer Application"},
+             [{description,"An OTP application"},
               {vsn,"0.1.0"},
               {registered,[]},
+              {applications,[kernel,stdlib,sasl]},
               {mod,{customer_sup,[]}},
-              {applications,[kernel,stdlib]},
               {env,[]},
-              {modules,[customer_fsm,customer_mng,customer_sup]}]}.
+              {modules,[customer_fsm,customer_mng,customer_sup]},
+              {maintainers,[]},
+              {licenses,["Apache 2.0"]},
+              {links,[]}]}.
