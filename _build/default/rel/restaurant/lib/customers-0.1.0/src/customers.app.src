@@ -1,0 +1,12 @@
+{application, customers,
+ [{description, "Customer Application"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {customer_sup, []}},  %% <-- החלק החשוב: מגדיר מי המפקח הראשי
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []}
+ ]}.

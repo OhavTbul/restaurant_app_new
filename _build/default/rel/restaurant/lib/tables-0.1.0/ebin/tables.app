@@ -1,0 +1,8 @@
+{application,tables,
+             [{description,"Tables Application"},
+              {vsn,"0.1.0"},
+              {registered,[table_registry]},
+              {mod,{table_sup,[]}},
+              {applications,[kernel,stdlib]},
+              {env,[]},
+              {modules,[table_fsm,table_mng,table_registry,table_sup]}]}.

@@ -1,0 +1,7 @@
+%% coding: utf-8
+[{release,"machines","0.1.0","12.3.2.9",
+          [{kernel,"8.3.2.3","./lib/kernel-8.3.2.3"},
+           {stdlib,"3.17.2.2","./lib/stdlib-3.17.2.2"},
+           {sasl,"4.1.2","./lib/sasl-4.1.2"},
+           {machines,"0.1.0","./lib/machines-0.1.0"}],
+          permanent}].
