@@ -118,7 +118,7 @@ cooking(info, {cooking_done, Order}, State) ->
     case Order of
         #{table_id := TableId, client_id := CustomerId} ->
             Task = {deliver_food, TableId, CustomerId, Order},
-            task_registry:request_task(Task),
+            gen_server:cast({global, {task_registry}}, {add_task,Task}),
             io:format("[machine_fsm] Added delivery task to waiter queue for customer ~p at table ~p~n", [CustomerId, TableId]);
         _ ->
             io:format("[machine_fsm] Invalid order format or missing customer_id in order: ~p~n", [Order])

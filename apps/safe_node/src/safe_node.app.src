@@ -1,14 +1,12 @@
 {application, safe_node,
- [{description, "Safe Node Application"},
+ [
+  {description, "Safe Node Application"},
   {vsn, "0.1.0"},
   {registered, []},
   {mod, {safe_node_app, []}},
-  {applications,
-   [kernel,
-    stdlib
-   ]},
-  {env,[]},
-  {modules, [task_registry]},
+  {applications, [kernel, stdlib]},
+  {env, []},
+  {modules, [safe_node_app, task_registry, order_registry]}, %% הוספתי את order_registry
   {licenses, ["Apache-2.0"]},
   {links, []}
- ]}. 
+ ]}.

@@ -1,16 +1,13 @@
-{application,customers,
- [{description,"An OTP application"},
-  {vsn,"0.1.0"},
-  {registered,[]},
-  {applications,
-   [kernel,
-    stdlib,
-    sasl % אם קיים
-   ]},
-  {mod, {customer_sup, []}}, % <--- הוסף שורה זו!
-  {env,[]},
-  {modules,[]},
-  {maintainers,[]},
-  {licenses,["Apache 2.0"]},
-  {links,[]}
+{application, customers,
+ [
+  {description, "An OTP application"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {applications, [kernel, stdlib, sasl]},
+  {mod, {customer_sup, []}},
+  {env, []},
+  {modules, [customer_sup, customer_fsm, customer_mng]},
+  {maintainers, []},
+  {licenses, ["Apache 2.0"]},
+  {links, []}
  ]}.

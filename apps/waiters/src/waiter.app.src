@@ -1,0 +1,13 @@
+{application, waiters,
+ [
+  {description, "Waiters Application"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {mod, {waiter_sup, []}},
+  {applications, [kernel, stdlib]},
+  {env, []},
+  {modules, [waiter_sup, waiter_fsm, waiter_mng]},
+  {maintainers, []},
+  {licenses, ["Apache 2.0"]},
+  {links, []}
+ ]}.

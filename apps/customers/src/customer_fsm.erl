@@ -50,13 +50,12 @@ receive_order(ClientId, _Order) ->
 
 init(ClientId) ->
     case ets:lookup(customer_state, ClientId) of
-        %% שחזור מצב
+        % Try to restore from ETS
         [{ClientId, SavedState}] ->
             io:format("Customer ~p restarted with previous state.~n", [ClientId]),
             StateName = maps:get(state, SavedState, idle),
             erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
 
-            %% הפעלה מחדש של הטיימר המתאים למצב
             case StateName of
                 idle ->
                     {ok, idle, SavedState, {state_timeout, ?TABLE_TIMEOUT, timeout_table}};
@@ -64,7 +63,7 @@ init(ClientId) ->
                     {ok, seated, SavedState, {state_timeout, ?ORDER_TIMEOUT, timeout_order}};
                 eating ->
                     {ok, eating, SavedState, {state_timeout, ?EAT_TIMEOUT, done_eating}};
-                _ -> % למצבים waiting_food, paying, leaving אין state_timeout
+                _ -> % waiting_food, paying, leaving no state_timeout
                     {ok, StateName, SavedState}
             end;
 
@@ -99,18 +98,17 @@ send_heartbeat(State) -> %update sup
 
 %%%--- IDLE
 
-idle(cast, {assign_table, TableId}, State) -> %customer got table
-    io:format("Customer ~p assigned to table ~p~n", [maps:get(client_id, State), TableId]),
-    %% table POS knwom by table id
-    %TablePos = table_position(TableId),  %% todo need to add function for table pos
-    TablePos ={0,0},
+idle(cast, {assign_table, TableId}, State) -> % customer got table
+    ClientId = maps:get(client_id, State),
+    io:format("Customer ~p assigned to table ~p~n", [ClientId, TableId]),
+    %% table POS known by table id
+    TablePos = {0,0},  %% TODO: replace with real position later
     NewState = State#{table => TableId, pos => TablePos},
     send_heartbeat(NewState),
-    % הוסף שורה זו: שלח לעצמך הודעת הזמנה קצרה לאחר ישיבה
-    gen_statem:cast(self(), {order, pizza}), % <--- שינוי קריטי! simulation orfer alone
-    io:format("Customer ~p placed order for pizza after seating (sending self message).~n", [maps:get(client_id, State)]), % <--- הודעת דיבוג
+    Task = #{type => take_order, table_id => TableId, client_id => ClientId},
+    gen_server:cast({global, task_registry}, {add_task, Task}),
+    io:format("Customer ~p sent take_order task.~n", [ClientId]),
     {next_state, seated, NewState, {state_timeout, ?ORDER_TIMEOUT, timeout_order}};
-
 
 idle(state_timeout, timeout_table, State) -> %table timeout
     CustomerId = maps:get(client_id, State),
@@ -122,34 +120,23 @@ idle(state_timeout, timeout_table, State) -> %table timeout
 idle(_Type, _Event, State) ->
     {keep_state, State}.
 
-%%%--- SEATED
 
-%seated(cast, {order, MenuItem}, State) -> %waiter come to take order
-%    io:format("Customer ~p ordered ~p~n", [maps:get(client_id, State), MenuItem]),
-%    NewState = State#{order => MenuItem},
-%    send_heartbeat(NewState),
-%    {next_state, waiting_food, NewState};
-
-
-%simulation:
-
-seated(cast, {order, MenuItem}, State) ->
+seated(cast, {take_order, WaiterId}, State) ->
+    ClientId = maps:get(client_id, State),
     TableId = maps:get(table, State),
-    Order = #{meal => MenuItem, table_id => TableId, client_id => maps:get(client_id, State)},
-    MachineId = machine1, % <--- שינוי כאן ל-machine1
-    % שלח הודעה ישירות למכונה הרשומה גלובלית
-    gen_statem:cast({global, list_to_atom("machine_fsm_" ++ atom_to_list(MachineId))}, {machine_order, Order}),
-    io:format("Customer ~p ordered ~p, sent to machine ~p~n", [maps:get(client_id, State), Order, MachineId]),
-    NewState = State#{order => MenuItem},
-    send_heartbeat(NewState),
-    {next_state, waiting_food, NewState};
+    MenuItem = pizza,
+    NewState1 = State#{waiter => WaiterId, order => MenuItem},
+    Order = #{meal => MenuItem, table_id => TableId, client_id => ClientId},
+    gen_statem:cast({global, {waiter_fsm, WaiterId}}, {client_order, Order}),
+    io:format("Customer ~p (waiter ~p) ordered ~p and sent to waiter ~p~n", [ClientId, WaiterId, MenuItem, WaiterId]),
+    send_heartbeat(NewState1),
+    {next_state, waiting_food, NewState1};
 
 
 seated(state_timeout, timeout_order, State) -> %order timeout
     CustomerId = maps:get(client_id, State),
     TableId = maps:get(table, State),
     io:format("Customer ~p waited too long to order. Leaving.~n", [CustomerId]),
-    % שלח הודעה רק אם הלקוח אכן הושיב בשולחן
     case TableId of
         undefined ->
             io:format("Customer ~p leaving without assigned table.~n", [CustomerId]);
