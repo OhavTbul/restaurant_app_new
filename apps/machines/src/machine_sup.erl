@@ -49,7 +49,8 @@ init([]) ->
 
 start_cook(MachineId) ->
     %% new fsm
-    ChildId = list_to_atom("machine_fsm_" ++ atom_to_list(MachineId)),
+    ChildId = {machine_fsm_, MachineId},
+
 
     ChildSpec = {
         ChildId,                                    

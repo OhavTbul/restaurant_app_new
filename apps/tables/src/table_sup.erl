@@ -54,7 +54,7 @@ init([]) ->
 
 start_table(TableId) -> %create new table
     %% new fsm
-    ChildId = list_to_atom("table_fsm" ++ atom_to_list(TableId)),
+    ChildId = {table_fsm, TableId},
 
     ChildSpec = {
         ChildId,

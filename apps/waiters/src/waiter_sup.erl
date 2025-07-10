@@ -49,7 +49,8 @@ init([]) ->
 
 start_waiter(WaiterId) ->
     %% new fsm
-    ChildId = list_to_atom("waiter_fsm_" ++ atom_to_list(WaiterId)),
+    ChildId = {waiter_fsm, WaiterId},
+
 
     ChildSpec = {
         ChildId,                                    

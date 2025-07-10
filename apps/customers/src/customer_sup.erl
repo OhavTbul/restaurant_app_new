@@ -45,7 +45,7 @@ init([]) ->
 
 start_client(CustomerId) ->
     %% new fsm
-     ChildId = list_to_atom("customer_fsm_" ++ integer_to_list(CustomerId)),
+     ChildId = {customer_fsm, CustomerId},
 
     ChildSpec = {
         ChildId,                                    
