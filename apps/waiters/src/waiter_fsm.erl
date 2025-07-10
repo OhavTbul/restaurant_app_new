@@ -8,10 +8,10 @@
 -behaviour(gen_statem).
 
 %% API
--export([start_link/1, take_order/2, serve_meal/3, upgrade/1]).
+-export([start_link/1, take_order/3, serve_meal/4, upgrade/1]).
 
 %% gen_statem callbacks
--export([init/1, callback_mode/0, terminate/3, code_change/4, handle_event/3, handle_info/2]).
+-export([init/1, callback_mode/0, terminate/3, code_change/4, handle_info/2]).
 
 %% States
 -export([idle/3, taking_order/3, send_order/3, pick_up_meal/3, serving/3]).
@@ -29,24 +29,38 @@
 % Define ETS table for waiter state
 -define(TABLE, waiter_state).
 
+
 %%%===================================================================
 %%% Public API
 %%%===================================================================
 
 start_link(WaiterId) ->
-    Name = list_to_atom("waiter_fsm_" ++ atom_to_list(WaiterId)),
+    Name = {?MODULE, WaiterId},
     gen_statem:start_link({global, Name}, ?MODULE, WaiterId, []). 
 
-take_order(WaiterId, TableId) ->
-    Name = list_to_atom("waiter_fsm_" ++ atom_to_list(WaiterId)),
-    gen_statem:cast({global, Name}, {task, {take_order, TableId}}).
+% עדכון החתימה והגוף של הפונקציה
+take_order(WaiterId, TableId, ClientId) ->
+    Name = {?MODULE, WaiterId},
+    TaskMap = #{
+        type => take_order,
+        table_id => TableId,
+        client_id => ClientId
+    },
+    gen_statem:cast({global, Name}, {task, TaskMap}).
 
-serve_meal(WaiterId, TableId, Meal) ->
-    Name = list_to_atom("waiter_fsm_" ++ atom_to_list(WaiterId)),
-    gen_statem:cast({global, Name}, {task, {serve_meal, TableId, Meal}}).
+% עדכון החתימה והגוף של הפונקציה
+serve_meal(WaiterId, TableId, ClientId, Meal) ->
+    Name = {?MODULE, WaiterId},
+    TaskMap = #{
+        type => serve_meal,
+        table_id => TableId,
+        client_id => ClientId,
+        meal => Meal
+    },
+    gen_statem:cast({global, Name}, {task, TaskMap}).
 
 upgrade(WaiterId) ->
-    Name = list_to_atom("waiter_fsm_" ++ atom_to_list(WaiterId)),
+    Name = {?MODULE, WaiterId},
     gen_statem:cast({global, Name}, upgrade).
 
 %%%===================================================================
@@ -80,7 +94,7 @@ init(WaiterId) ->
                 waiter_id => WaiterId,
                 speed_level => 0, % Initial speed level
                 current_task => undefined,
-                current_customer_id => undefined,
+                current_client_id  => undefined,
                 current_table_id => undefined,
                 current_meal => undefined
             },
@@ -97,11 +111,7 @@ terminate(_Reason, _StateName, _Data) ->
 code_change(_OldVsn, StateName, Data, _Extra) ->
     {ok, StateName, Data}.
 
-% Generic handler for unexpected messages or common events
-handle_event(EventType, EventContent, State) ->
-    io:format("[waiter_fsm] Waiter ~p received unexpected event ~p: ~p in state ~p~n",
-              [maps:get(waiter_id, State), EventType, EventContent, gen_statem:which_state(self())]),
-    {keep_state, State}.
+
 
 handle_info(heartbeat_tick, State) ->
     % Example: Waiter could report status periodically
@@ -145,21 +155,30 @@ get_adjusted_time(ActionType, SpeedLevel) ->
 %%%===================================================================
 
 %%%--- IDLE
-idle(cast, {task, {take_order, TableId, ClientId}}, State) ->
+%%%--- IDLE
+idle(cast, {task, TaskMap}, State) when is_map(TaskMap) ->
     WaiterId = maps:get(waiter_id, State),
     SpeedLevel = maps:get(speed_level, State),
+    TableId = maps:get(table_id, TaskMap),
+    ClientId = maps:get(client_id, TaskMap),
     WalkTime = get_adjusted_time(walk, SpeedLevel),
-    io:format("[waiter_fsm] Waiter ~p assigned to take order from table ~p (walk + order).~n", [WaiterId, TableId]),
-    NewState = State#{current_table_id := TableId, current_client_id := ClientId, current_task := {take_order, TableId}},
-    {next_state, taking_order, NewState, {state_timeout, WalkTime, get_to_table_timeout}};
 
-idle(cast, {task, {serve_meal, TableId, Meal,ClientId}}, State) ->
-    WaiterId = maps:get(waiter_id, State),
-    SpeedLevel = maps:get(speed_level, State),
-    WalkTime = get_adjusted_time(walk, SpeedLevel), % Pass 'walk' as ActionType
-    io:format("[waiter_fsm] Waiter ~p received task to serve meal ~p to table ~p.~n", [WaiterId, Meal, TableId]),
-    NewState = State#{current_table_id := TableId, current_client_id := ClientId,current_meal := Meal, current_task := {serve_meal, TableId, Meal}},
-    {next_state, pick_up_meal, NewState, {state_timeout, WalkTime, walk_time}};
+    case maps:get(type, TaskMap) of
+        take_order ->
+            io:format("[waiter_fsm] Waiter ~p assigned to take order from table ~p (walk + order).~n", [WaiterId, TableId]),
+            NewState = State#{current_table_id := TableId, current_client_id := ClientId, current_task := {take_order, TableId}},
+            {next_state, taking_order, NewState, {state_timeout, WalkTime, get_to_table_timeout}};
+
+        serve_meal ->
+            Meal = maps:get(meal, TaskMap), % Assuming the meal is passed in the task map
+            io:format("[waiter_fsm] Waiter ~p received task to serve meal ~p to table ~p.~n", [WaiterId, Meal, TableId]),
+            NewState = State#{current_table_id := TableId, current_client_id := ClientId, current_meal := Meal, current_task := {serve_meal, TableId, Meal}},
+            {next_state, pick_up_meal, NewState, {state_timeout, WalkTime, walk_time}};
+            
+        _Other ->
+            io:format("[waiter_fsm] Waiter ~p received unknown task type: ~p~n", [WaiterId, maps:get(type, TaskMap)]),
+            {keep_state, State}
+    end;
 
 idle(cast, upgrade, State) ->
     WaiterId = maps:get(waiter_id, State),
@@ -169,6 +188,7 @@ idle(cast, upgrade, State) ->
     {keep_state, State#{speed_level := NewLevel}};
 
 idle(_Type, _Event, State) ->
+    io:format("[waiter_fsm] Waiter ~p received unhandled event ~p in idle state~n", [maps:get(waiter_id, State), _Event]),
     {keep_state, State}.
 
 
@@ -179,8 +199,7 @@ taking_order(state_timeout, get_to_table_timeout, State) ->
     ClientId = maps:get(current_client_id, State),
     io:format("[waiter_fsm] Waiter ~p start taking order from table ~p.~n", [WaiterId, TableId]),
     gen_server:cast({global, {customer_fsm,ClientId}}, {take_order,WaiterId}),
-    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined},
-    {next_state, idle, NewState}; % No returning state, goes back to idle
+    {next_state, send_order, State, {state_timeout, 20000, customer_reply_timeout}};
 
 taking_order(cast, upgrade, State) ->
     WaiterId = maps:get(waiter_id, State),
@@ -193,12 +212,24 @@ taking_order(_Type, _Event, State) ->
     {keep_state, State}.
 
 %%--send order
+%% in waiter_fsm.erl, send_order/3
 send_order(cast, {client_order, Order}, State) ->
     WaiterId = maps:get(waiter_id, State),
     io:format("[waiter_fsm] Waiter ~p send meal to order queue.~n", [WaiterId]),
-    gen_server:cast({global, {order_registry}}, {add_order,Order}),
-    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined},
-    {next_state, idle, NewState}; % No returning state, goes back to idle
+    gen_server:cast({global, order_registry}, {add_order,Order}),
+    NewState = State#{current_task => undefined, current_meal => undefined, current_table_id => undefined, current_client_id => undefined},
+    gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
+    {next_state, idle, NewState};
+
+
+%% טיפול במצב שהלקוח לא ענה בזמן
+send_order(state_timeout, customer_reply_timeout, State) ->
+    WaiterId = maps:get(waiter_id, State),
+    TableId = maps:get(current_table_id, State),
+    io:format("[waiter_fsm] Waiter ~p: Customer at table ~p did not respond (timeout). Returning to idle.~n", [WaiterId, TableId]),
+    gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
+    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined, current_client_id := undefined},
+    {next_state, idle, NewState};
 
 send_order(cast, upgrade, State) ->
     WaiterId = maps:get(waiter_id, State),
@@ -216,18 +247,21 @@ pick_up_meal(_Type, _Event, State) -> % Instant transition, no timeout
     io:format("[waiter_fsm] Waiter ~p picked up meal ~p. Walking to table ~p to serve...~n", [WaiterId, Meal, TableId]),
     SpeedLevel = maps:get(speed_level, State),
     WalkTime = get_adjusted_time(walk, SpeedLevel), % Pass 'walk' as ActionType
-    {next_state, serving, State, {state_timeout, WalkTime, walk_time}}.
+    ServeTime = get_adjusted_time(serve, SpeedLevel), 
+    TotalTime = WalkTime + ServeTime,
+    {next_state, serving, State, {state_timeout, TotalTime, total_time}}.
 
 %%%--- SERVING
-serving(state_timeout, serve_time, State) ->
+serving(state_timeout, total_time, State) ->
     WaiterId = maps:get(waiter_id, State),
     TableId = maps:get(current_table_id, State),
     ClientId = maps:get(current_client_id, State),
     Meal = maps:get(current_meal, State),
     io:format("[waiter_fsm] Waiter ~p finished serving meal ~p to table ~p. Returning to idle.~n", [WaiterId, Meal, TableId]),
-    gen_server:cast({global, {customer_fsm,ClientId}}, {food_arrived}),
-    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined},
-    {next_state, idle, NewState}; % No returning state, goes back to idle
+    gen_server:cast({global, {customer_fsm,ClientId}}, food_arrived),
+    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined, current_client_id := undefined},
+    gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
+    {next_state, idle, NewState};
 
 serving(cast, upgrade, State) ->
     WaiterId = maps:get(waiter_id, State),
@@ -238,3 +272,4 @@ serving(cast, upgrade, State) ->
 
 serving(_Type, _Event, State) ->
     {keep_state, State}.
+

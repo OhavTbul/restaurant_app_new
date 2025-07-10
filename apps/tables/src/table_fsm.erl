@@ -18,19 +18,19 @@
 %% ------------------------------------------------------------------
 
 start_link(TableId) -> %create new table
-    Name = list_to_atom("table_fsm_" ++ atom_to_list(TableId)),
+    Name = {?MODULE, TableId},
      gen_statem:start_link({global, Name}, ?MODULE, TableId, []).
 
 seat_customer(TableId, CustomerId) -> %send msg for customer been setead
-    Name = list_to_atom("table_fsm_" ++ atom_to_list(TableId)),
+    Name = {?MODULE, TableId},
     gen_statem:cast({global, Name}, {seat_customer, CustomerId}). 
 
 free_table(TableId, CustomerId) -> %send msg for customer left
-    Name = list_to_atom("table_fsm_" ++ atom_to_list(TableId)),
+    Name = {?MODULE, TableId},
     gen_statem:cast({global, Name}, {free_table, CustomerId}). 
 
 clean_table(TableId) -> %send msg for table clean
-    Name = list_to_atom("table_fsm_" ++ atom_to_list(TableId)),
+    Name = {?MODULE, TableId},
     gen_statem:cast({global, Name}, clean_table). 
 
 %% ------------------------------------------------------------------
@@ -68,10 +68,12 @@ init(TableId) ->
             },
             % זהו השינוי הקריטי: קריאה סינכרונית ל-table_registry
             % וודא שכל השורות הבאות מועתקות בדיוק, כולל הפסיקים והנקודה-פסיק
-            Result = case table_registry:notify_table_cleaned(TableId) of
-                ok -> io:format("[table_fsm] Successfully notified table_registry about new table ~p (sync).~n", [TableId]), ok;
-                {error, Reason} -> io:format("[table_fsm] ERROR: Failed to notify table_registry about new table ~p: ~p~n", [TableId, Reason]), {error, Reason}
-            end, % <--- וודא שיש פסיק בסוף ה-end אם יש עוד ביטויים אחריו
+            _ = case table_registry:notify_table_cleaned(TableId) of
+                ok ->
+                    io:format("[table_fsm] Successfully notified table_registry about new table ~p (sync).~n", [TableId]);
+                {error, Reason} ->
+                    io:format("[table_fsm] ERROR: Failed to notify table_registry about new table ~p: ~p~n", [TableId, Reason])
+            end,
             io:format("[table_fsm] Notified table_registry that table ~p is available.~n", [TableId]), % <--- וודא שיש פסיק בסוף השורה
             {ok, idle, InitialState}
     end. % <--- וודא שיש רק end. אחד כאן
@@ -97,13 +99,7 @@ idle(cast, {seat_customer, CustomerId}, State) -> %customer get to the table to 
     io:format("[table_fsm] Customer ~p seated at table ~p~n", [CustomerId, TableId]),
     gen_statem:cast({global, {customer_fsm, CustomerId}}, {assign_table, TableId}), %% ←update customer about the table
     NewState = State#{customer_id => CustomerId},
-    table_sup:update_table_state(TableId, #{state => taken, customer_id => CustomerId}),
-    
-    % Request waiter to take order
-    Task = {take_order, TableId, CustomerId},
-    task_registry:request_task(Task),
-    io:format("[table_fsm] Requested waiter to take order from customer ~p at table ~p~n", [CustomerId, TableId]),
-    
+    table_sup:update_table_state(TableId, #{state => taken, customer_id => CustomerId}), 
     {next_state, taken, NewState};
 
 

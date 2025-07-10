@@ -18,6 +18,7 @@ start_link() -> %start sup
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
+    io:format("[customer_sup] init/1 started~n"),
     case ets:info(?TABLE_STATE) of
         undefined ->
             ets:new(?TABLE_STATE, [named_table, public, set, {read_concurrency, true}]),
@@ -35,6 +36,7 @@ init([]) ->
         [customer_mng]
     },
     %%Define child spec - customer_fsm - simple child that can be duplicate
+    io:format("[customer_sup] Returning supervisor spec~n"),
     {ok, {{one_for_one, 5, 10}, [MngSpec]}}.
 
 %%%===================

@@ -84,7 +84,7 @@ upgrade_waiter(WaiterId) ->
             io:format("Cannot upgrade. waiter ~p not found.~n", [WaiterId]),
             {error, not_found};
         _ ->
-            waiter_fsm:upgrade(WaiterId)
+            waiter_fsm:upgrade(WaiterId),
             ok
     end.
 

@@ -5,6 +5,6 @@
               {mod,{safe_node_app,[]}},
               {applications,[kernel,stdlib]},
               {env,[]},
-              {modules,[task_registry]},
+              {modules,[order_registry,safe_node_app,task_registry]},
               {licenses,["Apache-2.0"]},
               {links,[]}]}.

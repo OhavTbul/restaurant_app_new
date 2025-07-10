@@ -12,7 +12,7 @@
 
 %% Macros
 -define(TABLE_TIMEOUT, 25000). % 25sec (Increased for debugging)
--define(ORDER_TIMEOUT, 8000). % 8sec
+-define(ORDER_TIMEOUT, 20000). % 20sec
 -define(EAT_TIMEOUT, 4000).  % 4sec
 -define(HEARTBEAT_INTERVAL, 3000).  % 3sec
 
@@ -24,23 +24,23 @@ start_link(ClientId) -> % Create and start a new customer FSM with given ID
     gen_statem:start_link({global, {customer_fsm, ClientId}}, ?MODULE, ClientId, []).
 
 assign_table(ClientId, TableId) -> %sending msg to customer fsm - got table
-    Name = {customer_fsm, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
     gen_statem:cast({global, Name}, {assign_table, TableId}).
 
 place_order(ClientId, MenuItem) -> %sending msg to customer fsm - ordered
-    Name = {customer_fsm, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
     gen_statem:cast({global,Name}, {order, MenuItem}).
 
 done_eating(ClientId) -> %sending msg to customer fsm - done eating
-    Name = {customer_fsm, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
     gen_statem:cast({global,Name}, done_eating).
 
 pay(ClientId) -> %sending msg to customer fsm - done paing
-    Name = {customer_fsm, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
     gen_statem:cast({global,Name}, paid).
 
 receive_order(ClientId, _Order) ->
-    Name = {customer_fsm, ClientId},
+    Name = {?MODULE, ClientId},
     gen_statem:cast({global, Name}, food_arrived).
 
 
@@ -72,6 +72,7 @@ init(ClientId) ->
             io:format("Customer ~p entered and waiting for table.~n", [ClientId]),
             gen_server:cast({global, table_registry}, {request_table, ClientId}),
             State = #{client_id => ClientId, pos => {0, 0}, state => idle}, % חשוב להוסיף את המצב
+            io:format("[DEBUG] Sending request_table to table_registry for customer ~p~n", [ClientId]),
             erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
             {ok, idle, State, {state_timeout, ?TABLE_TIMEOUT, timeout_table}}
     end.
@@ -141,9 +142,12 @@ seated(state_timeout, timeout_order, State) -> %order timeout
         undefined ->
             io:format("Customer ~p leaving without assigned table.~n", [CustomerId]);
         _ ->
-            gen_statem:cast({global, list_to_atom("table_fsm_" ++ atom_to_list(TableId))}, {free_table, CustomerId}),
+            gen_statem:cast({global, {table_fsm, TableId}}, {free_table, CustomerId}),
             io:format("Customer ~p sent free_table message to table ~p.~n", [CustomerId, TableId])
     end,
+    gen_statem:cast({global, task_registry}, {cancel_task, CustomerId}),
+    io:format("Customer ~p canceled task.~n", [CustomerId]),
+
     {next_state, leaving, State};
 
 
@@ -192,7 +196,7 @@ paying(cast, paid, State) ->
         undefined ->
             io:format("Customer ~p paid and leaving without assigned table.~n", [ClientId]);
         _ ->
-            gen_statem:cast({global, list_to_atom("table_fsm_" ++ atom_to_list(TableId))}, {free_table, ClientId}),
+            gen_statem:cast({global, {table_fsm, TableId}}, {free_table, ClientId}),
             io:format("Customer ~p sent free_table message to table ~p.~n", [ClientId, TableId])
     end,
     %known pos to exit

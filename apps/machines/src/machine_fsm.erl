@@ -14,15 +14,15 @@
 %%%=======================
 
 start_link(MachineId) -> %create machine
-    Name = list_to_atom("machine_fsm_" ++ atom_to_list(MachineId)),
+    Name = {?MODULE, MachineId},
     gen_statem:start_link({global, Name}, ?MODULE, MachineId, []).
 
 machine_order(MachineId, Order) -> %sendin msg to create order
-    Name = list_to_atom("machine_fsm_" ++ atom_to_list(MachineId)),
+    Name = {?MODULE, MachineId},
     gen_statem:cast({global, Name}, {machine_order, Order}).
 
 upgrade(MachineId) -> %sending msg to upgrade
-    Name = list_to_atom("machine_fsm_" ++ atom_to_list(MachineId)),
+    Name = {?MODULE, MachineId},
     gen_statem:cast({global, Name}, upgrade).
 
 %%%=======================
@@ -45,6 +45,7 @@ init(MachineId) ->
             end;
         [] ->
             %% First time startup
+            gen_server:cast({global, order_registry}, {machine_ready, MachineId}),
             {ok, idle, #{machine_id => MachineId, current_order => undefined, upgrade_level => 0}}
     end.
 
@@ -116,13 +117,20 @@ cooking(info, {cooking_done, Order}, State) ->
     }),
     % Add delivery task to waiter queue
     case Order of
-        #{table_id := TableId, client_id := CustomerId} ->
-            Task = {deliver_food, TableId, CustomerId, Order},
-            gen_server:cast({global, {task_registry}}, {add_task,Task}),
-            io:format("[machine_fsm] Added delivery task to waiter queue for customer ~p at table ~p~n", [CustomerId, TableId]);
+        #{table_id := TableId, client_id := CustomerId, meal := Meal} ->
+            % V-- התיקון --V
+            Task = #{
+                type => serve_meal, 
+                table_id => TableId, 
+                client_id => CustomerId, 
+                meal => Meal
+            },
+            gen_server:cast({global, task_registry}, {add_task, Task}),
+            io:format("[machine_fsm] Added 'serve_meal' task to waiter queue for customer ~p at table ~p~n", [CustomerId, TableId]);
         _ ->
-            io:format("[machine_fsm] Invalid order format or missing customer_id in order: ~p~n", [Order])
+            io:format("[machine_fsm] Invalid order format or missing details in order: ~p~n", [Order])
     end,
+    gen_server:cast({global, order_registry}, {machine_ready, maps:get(machine_id, State)}),
     {next_state, idle, NewState};
 
 cooking(cast, upgrade, State) ->

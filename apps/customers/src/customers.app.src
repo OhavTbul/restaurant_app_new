@@ -3,7 +3,7 @@
   {description, "An OTP application"},
   {vsn, "0.1.0"},
   {registered, []},
-  {applications, [kernel, stdlib, sasl]},
+  {applications, [kernel, stdlib]},
   {mod, {customer_sup, []}},
   {env, []},
   {modules, [customer_sup, customer_fsm, customer_mng]},

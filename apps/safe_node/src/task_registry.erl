@@ -81,16 +81,23 @@ handle_cast({add_task, Task}, State) ->
     end;
 
 
-handle_cast({cancel_task, TaskId}, State) ->
+handle_cast({cancel_task, CustomerId}, State) ->
     Queue = maps:get(task_queue, State),
-    NewQueue = queue:filter(fun(Task) -> 
-        case Task of
-            #{task_id := Id} -> Id =/= TaskId;
-            _ -> true
-        end
-    end, Queue),
-    io:format("[task_registry] Cancelled task ~p. Queue length: ~p~n", [TaskId, queue:len(NewQueue)]),
+    NewQueue = queue:from_list(
+        lists:filter(
+            fun(Task) ->
+                case maps:find(customer_id, Task) of
+                    {ok, CustomerId} -> false; 
+                    _ -> true
+                end
+            end,
+            queue:to_list(Queue)
+        )
+    ),
+
+    io:format("[task_registry] Removed task(s) for customer ~p. New queue length: ~p~n", [CustomerId, queue:len(NewQueue)]),
     {noreply, State#{task_queue => NewQueue}};
+
 
 
 handle_cast({remove_waiter, WaiterId}, State) ->

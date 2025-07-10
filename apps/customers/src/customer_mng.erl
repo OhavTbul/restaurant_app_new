@@ -26,6 +26,7 @@ send_state_to_safe() ->
 %%%===================================================================
 
 init([]) ->
+    io:format("[customer_mng] init/1 called~n"),
     %% Start periodic report timer
     erlang:send_after(?REPORT_INTERVAL, self(), report_to_safe),
     erlang:send_after(1000, self(), generate_customer),
