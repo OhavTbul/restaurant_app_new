@@ -49,8 +49,7 @@ init([]) ->
 
 start_cook(MachineId) ->
     %% new fsm
-    ChildId = {machine_fsm_, MachineId},
-
+    ChildId = {machine_fsm, MachineId},
 
     ChildSpec = {
         ChildId,                                    
@@ -79,14 +78,13 @@ start_cook(MachineId) ->
 %%%===================
 
 upgrade_machine(MachineId) ->
-    Name = list_to_atom("machine_fsm_" ++ atom_to_list(MachineId)),
-    case whereis(Name) of
-        undefined ->
-            io:format("Cannot upgrade. Machine ~p not found.~n", [MachineId]),
-            {error, not_found};
-        _ ->
+    case ets:lookup(?TABLE, MachineId) of
+        [{MachineId, _MachineState}] ->
             machine_fsm:upgrade(MachineId),
-            ok
+            ok;
+        [] ->
+            io:format("Cannot upgrade. Machine ~p not found.~n", [MachineId]),
+            {error, not_found}
     end.
 
 %%%===================

@@ -75,18 +75,17 @@ start_waiter(WaiterId) ->
     end.
 
 %%%===================
-%%% upgrade machine
+%%% upgrade waiter
 %%%===================
 
 upgrade_waiter(WaiterId) ->
-    Name = list_to_atom("waiter_fsm_" ++ atom_to_list(WaiterId)),
-    case whereis(Name) of
-        undefined ->
-            io:format("Cannot upgrade. waiter ~p not found.~n", [WaiterId]),
-            {error, not_found};
-        _ ->
+    case ets:lookup(?TABLE, WaiterId) of
+        [{WaiterId, _WaiterState}] ->
             waiter_fsm:upgrade(WaiterId),
-            ok
+            ok;
+        [] ->
+            io:format("Cannot upgrade. waiter ~p not found.~n", [WaiterId]),
+            {error, not_found}
     end.
 
 %%%===================

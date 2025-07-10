@@ -185,7 +185,9 @@ idle(cast, upgrade, State) ->
     OldLevel = maps:get(speed_level, State),
     NewLevel = min(OldLevel + 1, 2), % Max speed level is 2
     io:format("[waiter_fsm] Waiter ~p upgraded speed from level ~p to ~p.~n", [WaiterId, OldLevel, NewLevel]),
-    {keep_state, State#{speed_level := NewLevel}};
+    NewState = State#{speed_level := NewLevel},
+    waiter_sup:update_waiter_state(WaiterId, NewState),
+    {keep_state, NewState};
 
 idle(_Type, _Event, State) ->
     io:format("[waiter_fsm] Waiter ~p received unhandled event ~p in idle state~n", [maps:get(waiter_id, State), _Event]),
@@ -206,7 +208,9 @@ taking_order(cast, upgrade, State) ->
     OldLevel = maps:get(speed_level, State),
     NewLevel = min(OldLevel + 1, 2),
     io:format("[waiter_fsm] Waiter ~p upgraded speed from level ~p to ~p while taking order.~n", [WaiterId, OldLevel, NewLevel]),
-    {keep_state, State#{speed_level := NewLevel}};
+    NewState = State#{speed_level := NewLevel},
+    waiter_sup:update_waiter_state(WaiterId, NewState),
+    {keep_state, NewState};
 
 taking_order(_Type, _Event, State) ->
     {keep_state, State}.
@@ -236,7 +240,9 @@ send_order(cast, upgrade, State) ->
     OldLevel = maps:get(speed_level, State),
     NewLevel = min(OldLevel + 1, 2),
     io:format("[waiter_fsm] Waiter ~p upgraded speed from level ~p to ~p while taking order.~n", [WaiterId, OldLevel, NewLevel]),
-    {keep_state, State#{speed_level := NewLevel}}.
+    NewState = State#{speed_level := NewLevel},
+    waiter_sup:update_waiter_state(WaiterId, NewState),
+    {keep_state, NewState}.
 
 
 %%%--- PICK_UP_MEAL
@@ -268,7 +274,9 @@ serving(cast, upgrade, State) ->
     OldLevel = maps:get(speed_level, State),
     NewLevel = min(OldLevel + 1, 2),
     io:format("[waiter_fsm] Waiter ~p upgraded speed from level ~p to ~p while serving.~n", [WaiterId, OldLevel, NewLevel]),
-    {keep_state, State#{speed_level := NewLevel}};
+    NewState = State#{speed_level := NewLevel},
+    waiter_sup:update_waiter_state(WaiterId, NewState),
+    {keep_state, NewState};
 
 serving(_Type, _Event, State) ->
     {keep_state, State}.
