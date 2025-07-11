@@ -13,7 +13,8 @@
 -export([
     do_add_table/1, do_add_waiter/1, 
     do_upgrade_machine/1, do_add_machine/1, increase_price/2,
-    do_upgrade_specific_waiter/2, do_upgrade_specific_machine/2
+    do_upgrade_specific_waiter/2, do_upgrade_specific_machine/2,
+    dirty_table_notification/1,clean_dirty_table/1
 ]).
 
 
@@ -29,7 +30,8 @@
     table_counter = 0,
     waiter_counter = 0,
     machine_counter = 0,
-    prices = #prices{}
+    prices = #prices{},
+    dirty_tables = []
 }).
 
 %%% ================================
@@ -37,7 +39,7 @@
 %%% ================================
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 add_table()         -> gen_server:call(?MODULE, add_table).
 upgrade_waiter(WaiterId) -> gen_server:call(?MODULE, {upgrade_waiter, WaiterId}).
@@ -49,12 +51,16 @@ get_waiters()       -> gen_server:call(?MODULE, get_waiters).
 show_tables()       -> gen_server:call(?MODULE, show_tables).
 show_waiters()      -> gen_server:call(?MODULE, show_waiters).
 show_machines()     -> gen_server:call(?MODULE, show_machines).
+dirty_table_notification(TableId) -> gen_server:cast({global, ?MODULE}, {dirty_table, TableId}).
+clean_dirty_table(TableId) ->
+    gen_server:call({global, ?MODULE}, {clean_dirty_table, TableId}).
 
 %%% ================================
 %%% gen_server callbacks
 %%% ================================
 
 init([]) ->
+    io:format("start player~n", []),
     {ok, #state{}}.
 
 
@@ -97,11 +103,28 @@ handle_call(show_machines, _From, State) ->
     Machines = ets:tab2list(machine_state),
     {reply, Machines, State};
 
+handle_call({clean_dirty_table, TableId}, _From, State = #state{dirty_tables = DirtyTables}) ->
+    CleanPrice = 20, 
+    case lists:member(TableId, DirtyTables) of
+        true ->
+            case cashier:insert_money(CleanPrice) of
+                {ok, _NewBalance}->
+                    io:format("Player insert ~p on cleaning table ~p.~n", [CleanPrice, TableId]),
+                    table_fsm:clean_by_player(TableId),
+                    NewDirtyTables = lists:delete(TableId, DirtyTables),
+                    {reply, ok, State#state{dirty_tables = NewDirtyTables}};
+                {error, Reason} ->
+                    io:format("Player cannot clean table ~p: ~p~n", [TableId, Reason]),
+                    {reply, {error, Reason}, State}
+            end;
+        false ->
+            io:format("Table ~p is not dirty or already being cleaned.~n", [TableId]),
+            {reply, {error, not_dirty}, State}
+    end;
+
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
 
-handle_cast(_Msg, State) ->
-    {noreply, State}.
 
 handle_info(_Msg, State) ->
     {noreply, State}.
@@ -230,4 +253,13 @@ do_add_machine(State = #state{machine_counter = Counter}) ->
             io:format("Failed to add machine ~p: ~p~n", [MachineId, Reason]),
             State
     end.
+
+
+handle_cast({dirty_table, TableId}, State = #state{dirty_tables = DirtyTables}) ->
+    io:format("Player received notification that table ~p is dirty.~n", [TableId]),
+    NewDirtyTables = lists:usort([TableId | DirtyTables]),
+    {noreply, State#state{dirty_tables = NewDirtyTables}};
+
+handle_cast(_Msg, State) ->
+    {noreply, State}.
 

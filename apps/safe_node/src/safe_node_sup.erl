@@ -29,7 +29,13 @@ init([]) ->
          permanent, 5000, worker, [task_registry]},
 
         {order_registry, {order_registry, start_link, []},
-         permanent, 5000, worker, [order_registry]}
+         permanent, 5000, worker, [order_registry]},
+        
+        {player, {player, start_link, []},
+         permanent, 5000, worker, [player]},
+        
+        {cashier, {cashier, start_link, []},
+         permanent, 5000, worker, [cashier]}
     ],
 
     % הגדרת מדיניות השגחה - one_for_one מאפשר לנהל ילדים נוספים דינמית

@@ -7,7 +7,7 @@
 -behaviour(gen_statem).
 
 -export([start_link/1, init/1, callback_mode/0, terminate/3, code_change/4]).
--export([seat_customer/2, free_table/2, clean_table/1]).
+-export([seat_customer/2, free_table/2, clean_table/1,clean_by_player/1]).
 -export([idle/3, taken/3, dirty/3]).
 
 -define(CLEANING_TIME, 3000). %% 3 sec
@@ -36,6 +36,8 @@ clean_table(TableId) -> %send msg for table clean
     Name = {?MODULE, TableId},
     gen_statem:cast({global, Name}, clean_table). 
 
+clean_by_player(TableId) -> gen_statem:cast({global, {?MODULE, TableId}},clean_now).
+
 %% ------------------------------------------------------------------
 %% FSM Callbacks
 %% ------------------------------------------------------------------
@@ -53,7 +55,8 @@ init(TableId) ->
             %% הפעלה מחדש של הטיימר המתאים למצב
             case StateName of
                 dirty ->
-                    {ok, dirty, CurrentState, {state_timeout, ?CLEANING_TIME, clean_table_timeout}};
+                    player:dirty_table_notification(TableId),
+                    {ok, dirty, CurrentState};
                 taken ->
                     % כאן אין טיימר, אז זה תקין
                     {ok, taken, CurrentState};
@@ -130,7 +133,7 @@ taken(cast, {free_table, CustomerId}, State) -> %customer got up
     case maps:get(customer_id, State) of
         CustomerId ->
             io:format("[table_fsm] Customer ~p leaving table ~p (now dirty)~n", [CustomerId, TableId]),
-            erlang:send_after(?CLEANING_TIME, self(), clean_table_timeout), %simulation - cleaned alone todo - change
+            player:dirty_table_notification(TableId),
             NewState = State#{customer_id => undefined,state_name => dirty},
             table_sup:update_table_state(TableId, NewState),
             {next_state, dirty, NewState};
@@ -157,6 +160,14 @@ dirty(info, clean_table_timeout, State) -> %the table is clean
     % דווח ל-table_registry ישירות שהשולחן נקי ופנוי
     table_registry:notify_table_cleaned(TableId), % <--- שינוי קריטי!
     io:format("[table_fsm] Notified table_registry that table ~p is now cleaned and available.~n", [TableId]), % <--- הודעת דיבוג
+    NewState = State#{state_name => idle},
+    table_sup:update_table_state(TableId, NewState),
+    {next_state, idle, NewState};
+
+dirty(cast, clean_now, State) ->
+    TableId = maps:get(table_id, State),
+    io:format("[table_fsm] Table ~p received cleaning instruction from player. Notifying registry.~n", [TableId]),
+    table_registry:notify_table_cleaned(TableId),
     NewState = State#{state_name => idle},
     table_sup:update_table_state(TableId, NewState),
     {next_state, idle, NewState};
