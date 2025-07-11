@@ -52,26 +52,29 @@ init(ClientId) ->
     case ets:lookup(customer_state, ClientId) of
         % Try to restore from ETS
         [{ClientId, SavedState}] ->
-            io:format("Customer ~p restarted with previous state.~n", [ClientId]),
-            StateName = maps:get(state, SavedState, idle),
+            io:format("[customer_fsm] Restoring customer ~p from ETS~n", [ClientId]),
+            UpdatedState = SavedState#{client_id => ClientId, pid => self(), state_name => maps:get(state_name, SavedState, idle)},
+            StateName = maps:get(state_name, SavedState, idle),
             erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
 
             case StateName of
                 idle ->
-                    {ok, idle, SavedState, {state_timeout, ?TABLE_TIMEOUT, timeout_table}};
+                    {ok, idle, UpdatedState, {state_timeout, ?TABLE_TIMEOUT, timeout_table}};
                 seated ->
-                    {ok, seated, SavedState, {state_timeout, ?ORDER_TIMEOUT, timeout_order}};
+                    {ok, seated, UpdatedState, {state_timeout, ?ORDER_TIMEOUT, timeout_order}};
                 eating ->
-                    {ok, eating, SavedState, {state_timeout, ?EAT_TIMEOUT, done_eating}};
+                    {ok, eating, UpdatedState, {state_timeout, ?EAT_TIMEOUT, done_eating}};
                 _ -> % waiting_food, paying, leaving no state_timeout
-                    {ok, StateName, SavedState}
+                    {ok, StateName, UpdatedState}
             end;
 
         %% התחלה חדשה
         [] ->
             io:format("Customer ~p entered and waiting for table.~n", [ClientId]),
             gen_server:cast({global, table_registry}, {request_table, ClientId}),
-            State = #{client_id => ClientId, pos => {0, 0}, state => idle}, % חשוב להוסיף את המצב
+            State = #{client_id => ClientId, pid => self(),pos => {0, 0}, state_name => idle},
+            send_heartbeat(State),
+
             io:format("[DEBUG] Sending request_table to table_registry for customer ~p~n", [ClientId]),
             erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
             {ok, idle, State, {state_timeout, ?TABLE_TIMEOUT, timeout_table}}
@@ -87,7 +90,8 @@ code_change(_OldVsn, StateName, Data, _Extra) -> {ok, StateName, Data}. %OTP fun
 %%% Heartbeat
 %%%===================
 
-send_heartbeat(State) -> %update sup
+
+send_heartbeat(State) -> 
     customer_sup:update_customer_state(maps:get(client_id, State), State),
     ok.
 
@@ -98,13 +102,17 @@ send_heartbeat(State) -> %update sup
 
 
 %%%--- IDLE
+idle(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 idle(cast, {assign_table, TableId}, State) -> % customer got table
     ClientId = maps:get(client_id, State),
     io:format("Customer ~p assigned to table ~p~n", [ClientId, TableId]),
     %% table POS known by table id
     TablePos = {0,0},  %% TODO: replace with real position later
-    NewState = State#{table => TableId, pos => TablePos},
+    NewState = State#{table => TableId, pos => TablePos, state_name => seated},
     send_heartbeat(NewState),
     Task = #{type => take_order, table_id => TableId, client_id => ClientId},
     gen_server:cast({global, task_registry}, {add_task, Task}),
@@ -115,18 +123,24 @@ idle(state_timeout, timeout_table, State) -> %table timeout
     CustomerId = maps:get(client_id, State),
     io:format("Customer ~p gave up waiting for table (TIMEOUT). Sending cancel request.~n", [CustomerId]),
     gen_server:cast({global, table_registry}, {cancel_request, CustomerId}),
-    {next_state, leaving, State};
+    NewState = State#{state_name => leaving},
+    send_heartbeat(NewState),
+    {next_state, leaving, NewState};
 
 %%If an unexpected event arrives by mistake, simply ignore it and avoid crashing.
 idle(_Type, _Event, State) ->
     {keep_state, State}.
 
+seated(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 seated(cast, {take_order, WaiterId}, State) ->
     ClientId = maps:get(client_id, State),
     TableId = maps:get(table, State),
     MenuItem = pizza,
-    NewState1 = State#{waiter => WaiterId, order => MenuItem},
+    NewState1 = State#{waiter => WaiterId, order => MenuItem,state_name => waiting_food},
     Order = #{meal => MenuItem, table_id => TableId, client_id => ClientId},
     gen_statem:cast({global, {waiter_fsm, WaiterId}}, {client_order, Order}),
     io:format("Customer ~p (waiter ~p) ordered ~p and sent to waiter ~p~n", [ClientId, WaiterId, MenuItem, WaiterId]),
@@ -147,8 +161,9 @@ seated(state_timeout, timeout_order, State) -> %order timeout
     end,
     gen_statem:cast({global, task_registry}, {cancel_task, CustomerId}),
     io:format("Customer ~p canceled task.~n", [CustomerId]),
-
-    {next_state, leaving, State};
+    NewState = State#{state_name => leaving},
+    send_heartbeat(NewState),
+    {next_state, leaving, NewState};
 
 
 %%If an unexpected event arrives by mistake, simply ignore it and avoid crashing.
@@ -156,11 +171,16 @@ seated(_Type, _Event, State) ->
     {keep_state, State}.
 
 %%%--- WAITING_FOOD
+waiting_food(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 waiting_food(cast, food_arrived, State) -> %customer got food
     io:format("Customer ~p received food. Eating now~n", [maps:get(client_id, State)]),
     send_heartbeat(State),
-    {next_state, eating, State, {state_timeout, ?EAT_TIMEOUT, done_eating}};
+    NewState = State#{state_name => eating},
+    {next_state, eating, NewState, {state_timeout, ?EAT_TIMEOUT, done_eating}};
 
 
 %%If an unexpected event arrives by mistake, simply ignore it and avoid crashing.
@@ -170,6 +190,10 @@ waiting_food(_Type, _Event, State) ->
 
 
 %%%--- EATING
+eating(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 eating(state_timeout, done_eating, State) ->
     CustomerId = maps:get(client_id, State),
@@ -177,7 +201,9 @@ eating(state_timeout, done_eating, State) ->
     % שלח לעצמך הודעת 'paid' כדי להגיע למצב paying ולשחרר שולחן משם
     gen_statem:cast(self(), paid), % <--- שינוי קריטי!
     io:format("Customer ~p sent 'paid' message to self after eating.~n", [CustomerId]), % <--- הודעת דיבוג
-    {next_state, paying, State};
+    NewState = State#{state_name => paying},
+    send_heartbeat(NewState),
+    {next_state, paying, NewState};
 
 
 %%If an unexpected event arrives by mistake, simply ignore it and avoid crashing.
@@ -186,6 +212,11 @@ eating(_Type, _Event, State) ->
 
 
 %%%--- PAYING
+
+paying(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 paying(cast, paid, State) ->
     ClientId = maps:get(client_id, State),
@@ -201,7 +232,7 @@ paying(cast, paid, State) ->
     end,
     %known pos to exit
     ExitPos = {999, 999}, %todo chane exit?
-    NewState = State#{pos => ExitPos},
+    NewState = State#{pos => ExitPos, state_name => leaving},
     send_heartbeat(NewState),
     {next_state, leaving, NewState};
 
@@ -212,14 +243,20 @@ paying(_Type, _Event, State) ->
 
 %%%--- LEAVING
 
+%%%--- LEAVING
 leaving(_Type, _Event, State) ->
+    ClientId = maps:get(client_id, State),
+    ets:delete(customer_state, ClientId),
+    io:format("[customer_fsm] Customer ~p removed from ETS.~n", [ClientId]), 
     {stop, normal, State}.
 
 
 handle_info(heartbeat_tick, State) ->
-    send_heartbeat(State), % שליחת העדכון
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick), % קביעת הטיימר הבא
+    send_heartbeat(State), % שליחה נכונה
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {noreply, State};
 
-handle_info(_, State) -> % טיפול בהודעות info אחרות אם יהיו
+handle_info(Msg, State) -> % טיפול בהודעות info אחרות אם יהיו
+    io:format("[customer_fsm] Customer ~p received unexpected info message: ~p in state ~p~n",
+              [maps:get(client_id, State), Msg, maps:get(state_name, State, unknown)]),
     {noreply, State}.

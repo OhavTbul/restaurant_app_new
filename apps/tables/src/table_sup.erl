@@ -15,6 +15,7 @@
 ]).
 -export([ update_table_state/2]).
 -export([start/2, stop/1]).
+-export([start_restored_fsm/1]).
 
 -define(ETS_UPDATE_TIME, 5000). %5sec
 -define(TABLE, table_state_ets). %5sec
@@ -22,15 +23,34 @@
 start_link() -> %create sup
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
+% in apps/tables/src/table_sup.erl
+
 init([]) ->
+    % יצירת טבלת ETS מקומית
     case ets:info(?TABLE) of
         undefined ->
             ets:new(?TABLE, [named_table, public, set, {read_concurrency, true}]),
             io:format("[table_sup] ETS table ~p created.~n", [?TABLE]);
         _ ->
-            ok % Table already exists, do nothing
+            ok
     end,
-    %maneger procces - communicate with safe node
+
+    % בקשת שחזור מהבקר המרכזי
+    io:format("[table_sup] Attempting to restore state from safe_node...~n"),
+    case gen_server:call({global, state_controller}, {get_full_state, tables}, 30000) of
+        {ok, RestoredData} when is_list(RestoredData) ->
+            if
+                RestoredData =/= [] ->
+                    ets:insert(?TABLE, RestoredData),
+                    io:format("[table_sup] Successfully restored ~p tables from safe_node.~n", [length(RestoredData)]);
+                true ->
+                    io:format("[table_sup] No previous state found for tables on safe_node.~n")
+            end;
+        Error ->
+            io:format("[table_sup] Could not restore state from safe_node: ~p~n", [Error])
+    end,
+
+    % הגדרת ילדים קבועים 
     MngSpec = {
         table_mng,
         {table_mng, start_link, []},
@@ -39,17 +59,26 @@ init([]) ->
         worker,
         [table_mng]
     },
-       %% הוספת ה-registry כילד של המפקח
     RegistrySpec = {
         table_registry,
         {table_registry, start_link, []},
-        permanent, % הרישום חייב לרוץ תמיד
+        permanent,
         5000,
         worker,
         [table_registry]
     },
 
-    {ok, {{one_for_one, 5, 10}, [MngSpec, RegistrySpec]}}.
+    %הפעלה מחדש של כל השולחנות שנשמרו
+    AllRestoredTables = ets:tab2list(?TABLE),
+    TableChildSpecs = [
+        { {table_fsm, TableId}, {table_fsm, start_link, [TableId]}, transient, 5000, worker, [table_fsm] }
+        || {TableId, _} <- AllRestoredTables
+    ],
+
+    %הרכבת הרשימה הסופית של כל הילדים
+    ChildSpecs = [MngSpec, RegistrySpec | TableChildSpecs],
+
+    {ok, {{one_for_one, 5, 10}, ChildSpecs}}.
 
 
 start_table(TableId) -> %create new table
@@ -66,8 +95,7 @@ start_table(TableId) -> %create new table
     },
 
     case supervisor:start_child(?MODULE, ChildSpec) of
-        {ok, Pid} ->
-            ets:insert(?TABLE, {TableId, #{pid => Pid}}),
+        {ok, _Pid} ->
             io:format("table ~p started.~n", [TableId]),
             ok;
         {error, {already_present, _}} ->
@@ -106,3 +134,20 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     ok.
+%%%===================================================================
+%%% restore
+%%%===================================================================
+start_restored_fsm(StateList) ->
+    lists:foreach(fun({TableId, StateMap}) ->
+        StateName = maps:get(state, StateMap, idle), % ברירת מחדל: idle
+        case gen_statem:start({global, {table_fsm, TableId}}, table_fsm, 
+                              {restore, TableId, StateName, StateMap}, []) of
+            {ok, Pid} ->
+                NewMap = maps:put(pid, Pid, StateMap),
+                ets:insert(?TABLE, {TableId, NewMap}),
+                io:format("[table_sup] Restored table ~p in state ~p.~n", [TableId, StateName]);
+            {error, Reason} ->
+                io:format("[table_sup] Failed to restore table ~p: ~p~n", [TableId, Reason])
+        end
+    end, StateList).
+

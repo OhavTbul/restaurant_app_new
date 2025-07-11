@@ -2,11 +2,11 @@
  [{description, "Cooking Machines Application"},
   {vsn, "0.1.0"},
   {registered, []},
-  {mod, {machine_sup, []}}, %% <-- החלק החשוב: מגדיר מי המפקח הראשי
+  {mod, {machine_sup, []}},
   {applications,
    [kernel,
     stdlib
    ]},
   {env,[]},
-  {modules, []}
+  {modules, [machine_sup, machine_fsm, machine_mng]} % <--- הוספת המודולים
  ]}.

@@ -9,7 +9,7 @@
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
 
 -define(TABLE, machine_state).
--define(REPORT_INTERVAL, 20000). % 20 sec
+-define(REPORT_INTERVAL, 10000). % 10 sec
 
 %%%===================================================================
 %%% API
@@ -25,7 +25,7 @@ send_state_to_safe() ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init(_SupPid) ->
+init([]) ->
     %% Start periodic report timer
     erlang:send_after(?REPORT_INTERVAL, self(), report_to_safe),
 
@@ -42,9 +42,10 @@ handle_info(_, State) ->
     {noreply, State}.
 
 handle_cast(send_report, State) ->
-    All = ets:tab2list(?TABLE),
-    %% todo: Replace this with actual message to SAFE NODE
-    io:format("[machine_mng] Sending ~p machine states to SAFE NODE~n", [length(All)]),
+    AllMachinesData = ets:tab2list(?TABLE),
+    % שליחת המידע לבקר המרכזי
+    gen_server:cast({global, state_controller}, {update, machines, AllMachinesData}),
+    io:format("[machine_mng] Sending ~p machine states to SAFE NODE~n", [length(AllMachinesData)]),
     {noreply, State};
 
 handle_cast(_, State) ->

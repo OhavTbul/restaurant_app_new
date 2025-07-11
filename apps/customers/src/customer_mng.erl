@@ -2,21 +2,21 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start_link/1]).
 -export([send_state_to_safe/0]).
 
 %% gen_server callbacks
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
 
 -define(TABLE, customer_state).
--define(REPORT_INTERVAL, 20000). % 20 sec
+-define(REPORT_INTERVAL, 10000). % 10 sec
 
 %%%===================================================================
 %%% API
 %%%===================================================================
 
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+start_link(RestoredCustomers) -> % שונה ל-arity 1
+    gen_server:start_link({local, ?MODULE}, ?MODULE, RestoredCustomers, []).
 
 send_state_to_safe() ->
     gen_server:cast(?MODULE, send_report).
@@ -25,12 +25,21 @@ send_state_to_safe() ->
 %%% gen_server callbacks
 %%%===================================================================
 
-init([]) ->
+init(RestoredCustomers) -> 
     io:format("[customer_mng] init/1 called~n"),
-    %% Start periodic report timer
+    NextId = if %calculate next ID
+        is_list(RestoredCustomers), RestoredCustomers =/= [] ->
+            MaxId = lists:max([CustomerId || {CustomerId, _} <- RestoredCustomers]),
+            io:format("[customer_mng] Restored state. Next customer ID will be ~p~n", [MaxId + 1]),
+            MaxId + 1;
+        true ->
+            io:format("[customer_mng] Starting fresh. Next customer ID will be 1~n"),
+            1
+    end,
+
     erlang:send_after(?REPORT_INTERVAL, self(), report_to_safe),
     erlang:send_after(1000, self(), generate_customer),
-    {ok, #{next_customer_id => 1}}. % <--- אתחל מונה לקוחות חדש
+    {ok, #{next_customer_id => NextId}}.
 
 handle_info(report_to_safe, State) ->
     %% Trigger send
@@ -60,9 +69,10 @@ handle_info(_, State) ->
     {noreply, State}.
 
 handle_cast(send_report, State) ->
-    All = ets:tab2list(?TABLE), % Removed trailing backslash
-    %% todo: Replace this with actual message to SAFE NODE
-    io:format("[customer_mng] Sending ~p customer states to SAFE NODE~n", [length(All)]), % Removed trailing backslash
+    AllCustomersData = ets:tab2list(?TABLE),
+    % שליחת המידע לבקר המרכזי
+    gen_server:cast({global, state_controller}, {update, customers, AllCustomersData}),
+    io:format("[customer_mng] Sending ~p customer states to SAFE NODE~n", [length(AllCustomersData)]),
     {noreply, State};
 
 handle_cast(_, State) ->

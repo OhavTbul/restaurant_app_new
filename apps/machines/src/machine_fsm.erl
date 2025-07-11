@@ -7,7 +7,8 @@
 % States
 -export([idle/3, cooking/3]).
 
-
+-define(HEARTBEAT_INTERVAL, 5000). % 5 seconds
+-export([handle_info/2]). % Add handle_info to exports
 
 %%%=======================
 %%% Public API
@@ -30,23 +31,37 @@ upgrade(MachineId) -> %sending msg to upgrade
 %%%=======================
 
 init(MachineId) ->
-    %% Try to restore from ETS
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     case ets:lookup(machine_state, MachineId) of
         [{_, SavedState}] ->
             io:format("Restoring machine ~p from ETS~n", [MachineId]),
-            State = SavedState#{machine_id => MachineId},
-            case maps:get(current_order, SavedState, undefined) of
-                undefined ->
-                    {ok, idle, State};
-                Order ->
+            State = SavedState#{machine_id => MachineId, pid => self(), state_name => maps:get(state_name, SavedState, idle)},
+            StateName = maps:get(state_name, SavedState, idle),
+            case StateName of
+                cooking ->
+                    Order = maps:get(current_order, State),
                     Delay = machine_time(maps:get(upgrade_level, State, 0)),
                     timer:send_after(Delay, {cooking_done, Order}),
-                    {ok, cooking, State}
+                    {ok, cooking, State};
+                idle ->
+                    {ok, idle, State}
             end;
         [] ->
             %% First time startup
+            io:format("Machine ~p starting (idle).~n", [MachineId]),
+            State = #{
+                machine_id => MachineId, 
+                pid => self(), 
+                current_order => undefined, 
+                upgrade_level => 0,
+                state_name => idle
+            },
+            
+            % *** התיקון הקריטי כאן: שמור את המצב המלא מיד עם ההתחלה ***
+            send_heartbeat(State),
+
             gen_server:cast({global, order_registry}, {machine_ready, MachineId}),
-            {ok, idle, #{machine_id => MachineId, current_order => undefined, upgrade_level => 0}}
+            {ok, idle, State}
     end.
 
 
@@ -71,18 +86,17 @@ machine_time(_) -> 1000.  % 1sec
 %%%=======================
 %%% IDLE State
 %%%=======================
+idle(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 idle(cast, {machine_order, Order}, State) ->
     Upgrade = maps:get(upgrade_level, State, 0),
     Delay = machine_time(Upgrade),
     timer:send_after(Delay, {cooking_done, Order}), %send when done cooking
     NewState = State#{current_order := Order},
-    machine_sup:update_machine_state(maps:get(machine_id, NewState), #{
-        state => cooking,
-        position => {200, 300}, %todo check positions
-        upgrade_level => Upgrade,
-        current_order => Order
-    }),
+    machine_sup:update_machine_state(maps:get(machine_id, NewState), NewState),
     {next_state, cooking, NewState};
 
 idle(cast, upgrade, State) ->
@@ -90,12 +104,7 @@ idle(cast, upgrade, State) ->
     New = min(Old + 1, 2),
     io:format("Machine ~p upgraded to level ~p~n", [maps:get(machine_id, State), New]),
     NewState = State#{upgrade_level := New},
-    machine_sup:update_machine_state(maps:get(machine_id, State), #{
-        state => idle,
-        position => {200, 300}, %todo check positions
-        upgrade_level => New,
-        current_order => undefined
-    }),
+    machine_sup:update_machine_state(maps:get(machine_id, NewState), NewState),
     {keep_state, NewState};
 
 %for unexpeced msgs
@@ -105,16 +114,15 @@ idle(EventType, EventContent, State) ->
 %%%=======================
 %%% cooking State
 %%%=======================
+cooking(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 cooking(info, {cooking_done, Order}, State) ->
     io:format("Machine ~p finished making order: ~p~n", [maps:get(machine_id, State), Order]),
-    NewState = State#{current_order := undefined},
-    machine_sup:update_machine_state(maps:get(machine_id, State), #{
-        state => idle,
-        position => {200, 300}, %todo check positions
-        upgrade_level => maps:get(upgrade_level, State),
-        current_order => undefined
-    }),
+    NewState = State#{current_order := undefined,state_name => idle},
+    machine_sup:update_machine_state(maps:get(machine_id, NewState), NewState),
     % Add delivery task to waiter queue
     case Order of
         #{table_id := TableId, client_id := CustomerId, meal := Meal} ->
@@ -148,13 +156,20 @@ cooking(EventType, EventContent, State) ->
 %%%=======================
 %%% Generic Handler
 %%%=======================
+%%%
+send_heartbeat(State) ->
+    machine_sup:update_machine_state(maps:get(machine_id, State), State).
 
 handle_event(EventType, EventContent, State) ->
     io:format("Machine ~p received unexpected event ~p: ~p~n", [maps:get(machine_id, State), EventType, EventContent]),
     {keep_state, State}.
 
-
-
-
-
+% --- Add handle_info/2 callback ---
+handle_info(heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
+handle_info(Msg, State) ->
+    io:format("[machine_fsm] Unexpected info: ~p~n", [Msg]),
+    {keep_state, State}.
 

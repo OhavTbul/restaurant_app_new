@@ -9,7 +9,7 @@
 -export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
 
 -define(TABLE, waiter_state).
--define(REPORT_INTERVAL, 20000). % 20 sec
+-define(REPORT_INTERVAL, 10000). % 10 sec
 
 %%%===================================================================
 %%% API
@@ -42,9 +42,10 @@ handle_info(_, State) ->
     {noreply, State}.
 
 handle_cast(send_report, State) ->
-    All = ets:tab2list(?TABLE),
-    %% todo: Replace this with actual message to SAFE NODE
-    io:format("[waiter_mng] Sending ~p waiter states to SAFE NODE~n", [length(All)]),
+    AllWaitersData = ets:tab2list(?TABLE),
+    % שליחת המידע לבקר המרכזי
+    gen_server:cast({global, state_controller}, {update, waiters, AllWaitersData}),
+    io:format("[waiter_mng] Sending ~p waiter states to SAFE NODE~n", [length(AllWaitersData)]),
     {noreply, State};
 
 handle_cast(_, State) ->

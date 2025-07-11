@@ -10,6 +10,8 @@
 
 
 -export([start/2, stop/1]).
+-export([start_restored_fsm/1]).
+
 %%%===================
 %%% API
 %%%===================
@@ -19,25 +21,50 @@ start_link() -> %start sup
 
 init([]) ->
     io:format("[customer_sup] init/1 started~n"),
+    % יצירת טבלת ETS מקומית
     case ets:info(?TABLE_STATE) of
         undefined ->
             ets:new(?TABLE_STATE, [named_table, public, set, {read_concurrency, true}]),
             io:format("[customer_sup] ETS table ~p created.~n", [?TABLE_STATE]);
         _ ->
-            ok % Table already exists, do nothing
+            ok
     end,
-    %maneger procces - communicate with safe node
+
+    % בקשת שחזור מהבקר המרכזי
+    io:format("[customer_sup] Attempting to restore state from safe_node...~n"),
+    {ok, RestoredData} = case gen_server:call({global, state_controller}, {get_full_state, customers}, 30000) of
+        {ok, Data} when is_list(Data) ->
+            if
+                Data =/= [] ->
+                    ets:insert(?TABLE_STATE, Data),
+                    io:format("[customer_sup] Successfully restored ~p customers from safe_node.~n", [length(Data)]);
+                true ->
+                    io:format("[customer_sup] No previous state found for customers on safe_node.~n")
+            end,
+            {ok, Data};
+        Error ->
+            io:format("[customer_sup] Could not restore state from safe_node: ~p~n", [Error]),
+            {ok, []} % במקרה של שגיאה, נמשיך עם רשימה ריקה
+    end,
+
+    % הגדרת ילד המנהל, עם המידע המשוחזר
     MngSpec = {
         customer_mng,
-        {customer_mng, start_link, []},
+        {customer_mng, start_link, [RestoredData]}, % העברת הרשימה כארגומנט
         transient, 
         5000,
         worker,
         [customer_mng]
     },
-    %%Define child spec - customer_fsm - simple child that can be duplicate
+
+    %הפעלה מחדש של כל הלקוחות שנשמרו
+    ChildSpecs = [
+        { {customer_fsm, CustomerId}, {customer_fsm, start_link, [CustomerId]}, transient, 5000, worker, [customer_fsm] }
+        || {CustomerId, _} <- RestoredData
+    ],
+    
     io:format("[customer_sup] Returning supervisor spec~n"),
-    {ok, {{one_for_one, 5, 10}, [MngSpec]}}.
+    {ok, {{one_for_one, 5, 10}, [MngSpec | ChildSpecs]}}.
 
 %%%===================
 %%% Start & Restart Customers
@@ -57,8 +84,7 @@ start_client(CustomerId) ->
     },
 
     case supervisor:start_child(?MODULE, ChildSpec) of
-        {ok, Pid} ->
-            ets:insert(?TABLE_STATE, {CustomerId, #{pid => Pid}}),
+        {ok, _Pid} ->
             io:format("customer ~p started.~n", [CustomerId]),
             ok;
         {error, {already_present, _}} ->
@@ -75,10 +101,14 @@ start_client(CustomerId) ->
 %%% Customer sends updated state periodically
 %%%===================
 
--spec update_customer_state(CustomerId :: term(), Data :: map()) -> ok.
 update_customer_state(CustomerId, Data) ->
-    %% Data must include pid, pos, state, table, etc.
-    ets:insert(?TABLE_STATE, {CustomerId, Data}),
+    case ets:lookup(?TABLE_STATE, CustomerId) of
+        [{_, OldMap}] ->
+            NewMap = maps:merge(OldMap, Data),
+            ets:insert(?TABLE_STATE, {CustomerId, NewMap});
+        [] ->
+            ets:insert(?TABLE_STATE, {CustomerId, Data})
+    end,
     ok.
 
 %%%===================
@@ -101,3 +131,20 @@ start(_StartType, _StartArgs) ->
 
 stop(_State) ->
     ok.
+%%%===================================================================
+%%% restore
+%%%===================================================================
+start_restored_fsm(StateList) ->
+    lists:foreach(fun({CustomerId, StateMap}) ->
+        StateName = maps:get(state, StateMap, idle),
+        case gen_statem:start({global, {customer_fsm, CustomerId}}, customer_fsm,
+                              {restore, CustomerId, StateName, StateMap}, []) of
+            {ok, Pid} ->
+                NewMap = maps:put(pid, Pid, StateMap),
+                ets:insert(?TABLE_STATE, {CustomerId, NewMap}),
+                io:format("[customer_sup] Restored customer ~p in state ~p.~n", [CustomerId, StateName]);
+            {error, Reason} ->
+                io:format("[customer_sup] Failed to restore customer ~p: ~p~n", [CustomerId, Reason])
+        end
+    end, StateList).
+

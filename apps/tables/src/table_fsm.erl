@@ -13,6 +13,9 @@
 -define(CLEANING_TIME, 3000). %% 3 sec
 -define(TABLE, table_state_ets).
 
+-define(HEARTBEAT_INTERVAL, 5000). % 5 seconds
+-export([handle_info/2]). % Add handle_info to exports
+
 %% ------------------------------------------------------------------
 %% Public API
 %% ------------------------------------------------------------------
@@ -39,12 +42,13 @@ clean_table(TableId) -> %send msg for table clean
 
 
 init(TableId) ->
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick), % Start heartbeat
     case ets:lookup(?TABLE, TableId) of
         %% שחזור מצב
         [{TableId, SavedState}] ->
-            io:format("[table_fsm] Restoring table ~p from ETS with state: ~p~n", [TableId, maps:get(state, SavedState, "unknown")]),
-            CurrentState = SavedState#{table_id => TableId}, 
-            StateName = maps:get(state, SavedState, idle),
+            io:format("[table_fsm] Restoring table ~p from ETS with state: ~p~n", [TableId, maps:get(state_name, SavedState, "unknown")]),
+            CurrentState = SavedState#{table_id => TableId, pid => self(), state_name => maps:get(state_name, SavedState, idle)}, 
+            StateName = maps:get(state_name, SavedState, idle), 
 
             %% הפעלה מחדש של הטיימר המתאים למצב
             case StateName of
@@ -55,6 +59,7 @@ init(TableId) ->
                     {ok, taken, CurrentState};
                 idle ->
                     % כאן אין טיימר, אז זה תקין
+                    table_registry:notify_table_cleaned(TableId),
                     {ok, idle, CurrentState}
             end;
 
@@ -63,9 +68,11 @@ init(TableId) ->
             io:format("[table_fsm] Table ~p starting for the first time~n", [TableId]),
             InitialState = #{ % <--- וודא שההזחה נכונה
                 table_id => TableId,
+                pid => self(),
                 customer_id => undefined,
-                state => idle
+                state_name => idle
             },
+            send_heartbeat(InitialState),
             % זהו השינוי הקריטי: קריאה סינכרונית ל-table_registry
             % וודא שכל השורות הבאות מועתקות בדיוק, כולל הפסיקים והנקודה-פסיק
             _ = case table_registry:notify_table_cleaned(TableId) of
@@ -93,13 +100,17 @@ code_change(_OldVsn, State, Data, _Extra) -> %otp function
 %% ------------------------------------------------------------------
 
 %% IDLE
+idle(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 idle(cast, {seat_customer, CustomerId}, State) -> %customer get to the table to seat
     TableId = maps:get(table_id, State),
     io:format("[table_fsm] Customer ~p seated at table ~p~n", [CustomerId, TableId]),
     gen_statem:cast({global, {customer_fsm, CustomerId}}, {assign_table, TableId}), %% ←update customer about the table
-    NewState = State#{customer_id => CustomerId},
-    table_sup:update_table_state(TableId, #{state => taken, customer_id => CustomerId}), 
+    NewState = State#{customer_id => CustomerId, state_name => taken},
+    table_sup:update_table_state(TableId, NewState), 
     {next_state, taken, NewState};
 
 
@@ -109,6 +120,10 @@ idle(_, _, State) ->
 
 
 %% TAKEN
+taken(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 taken(cast, {free_table, CustomerId}, State) -> %customer got up
     TableId = maps:get(table_id, State),
@@ -116,8 +131,8 @@ taken(cast, {free_table, CustomerId}, State) -> %customer got up
         CustomerId ->
             io:format("[table_fsm] Customer ~p leaving table ~p (now dirty)~n", [CustomerId, TableId]),
             erlang:send_after(?CLEANING_TIME, self(), clean_table_timeout), %simulation - cleaned alone todo - change
-            NewState = State#{customer_id => undefined},
-            table_sup:update_table_state(TableId, #{state => dirty}),
+            NewState = State#{customer_id => undefined,state_name => dirty},
+            table_sup:update_table_state(TableId, NewState),
             {next_state, dirty, NewState};
         _ ->
             io:format("[table_fsm] Unauthorized leave attempt by ~p at table ~p~n", [CustomerId, TableId]),
@@ -131,6 +146,10 @@ taken(_, _, State) ->
 
 %% DIRTY
 
+dirty(info, heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
 
 dirty(info, clean_table_timeout, State) -> %the table is clean
     TableId = maps:get(table_id, State),
@@ -138,10 +157,23 @@ dirty(info, clean_table_timeout, State) -> %the table is clean
     % דווח ל-table_registry ישירות שהשולחן נקי ופנוי
     table_registry:notify_table_cleaned(TableId), % <--- שינוי קריטי!
     io:format("[table_fsm] Notified table_registry that table ~p is now cleaned and available.~n", [TableId]), % <--- הודעת דיבוג
-    table_sup:update_table_state(TableId, #{state => idle}),
-    {next_state, idle, State};
+    NewState = State#{state_name => idle},
+    table_sup:update_table_state(TableId, NewState),
+    {next_state, idle, NewState};
 
 
 %for unexpected msgs
 dirty(_, _, State) ->
+    {keep_state, State}.
+
+% --- Helper Function to be added ---
+send_heartbeat(State) ->
+    table_sup:update_table_state(maps:get(table_id, State), State).
+
+% --- Add handle_info/2 callback ---
+handle_info(heartbeat_tick, State) ->
+    send_heartbeat(State),
+    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+    {keep_state, State};
+handle_info(_Msg, State) ->
     {keep_state, State}.
