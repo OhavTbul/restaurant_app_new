@@ -6,7 +6,7 @@
   {mod, {safe_node_sup, []}},
   {applications, [kernel, stdlib]},
   {env, []},
-  {modules, [safe_node_sup, task_registry, order_registry, state_controller,cashier,player]},
+  {modules, [safe_node_sup, task_registry, order_registry, state_controller,cashier,player,socket_server]},
   {licenses, ["Apache-2.0"]},
   {links, []}
  ]}.

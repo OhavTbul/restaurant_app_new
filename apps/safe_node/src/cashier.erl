@@ -14,16 +14,16 @@
 %%% ================================
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 insert_money(Amount) when is_integer(Amount), Amount > 0 ->
-    gen_server:call(?MODULE, {insert_money, Amount}).
+    gen_server:call({global, ?MODULE}, {insert_money, Amount}).
 
 spend_money(Amount) when is_integer(Amount), Amount > 0 ->
-    gen_server:call(?MODULE, {spend_money, Amount}).
+    gen_server:call({global, ?MODULE}, {spend_money, Amount}).
 
 get_balance() ->
-    gen_server:call(?MODULE, get_balance).
+    gen_server:call({global, ?MODULE}, get_balance).
 
 get_transaction_log() ->
     ets:tab2list(cashier_log).
@@ -39,6 +39,7 @@ init([]) ->
 handle_call({insert_money, Amount}, _From, State = #state{balance = Balance}) ->
     NewBalance = Balance + Amount,
     log_transaction(insert, Amount, NewBalance),
+    gen_server:cast({global, socket_server}, {gui_update, update_balance, NewBalance}),
     {reply, {ok, NewBalance}, State#state{balance = NewBalance}};
 
 handle_call({spend_money, Amount}, _From, State = #state{balance = Balance}) ->
@@ -46,6 +47,7 @@ handle_call({spend_money, Amount}, _From, State = #state{balance = Balance}) ->
         true ->
             NewBalance = Balance - Amount,
             log_transaction(spend, Amount, NewBalance),
+            gen_server:cast({global, socket_server}, {gui_update, update_balance, NewBalance}),
             {reply, ok, State#state{balance = NewBalance}};
         false ->
             {reply, {error, not_enough_money}, State}

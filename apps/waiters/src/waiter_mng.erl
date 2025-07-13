@@ -6,7 +6,7 @@
 -export([send_state_to_safe/0]).
 
 %% gen_server callbacks
--export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
+-export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3, get_level/1]).
 
 -define(TABLE, waiter_state).
 -define(REPORT_INTERVAL, 10000). % 10 sec
@@ -16,10 +16,13 @@
 %%%===================================================================
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 send_state_to_safe() ->
     gen_server:cast(?MODULE, send_report).
+
+get_level(WaiterId) ->
+    gen_server:call({global, ?MODULE}, {get_level, WaiterId}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -50,6 +53,23 @@ handle_cast(send_report, State) ->
 
 handle_cast(_, State) ->
     {noreply, State}.
+
+handle_call({get_level, WaiterId}, _From, State) ->
+    case ets:lookup(?TABLE, WaiterId) of
+        [{_Id, Map}] ->
+            Level = maps:get(speed_level, Map, 0),
+            {reply, {ok, Level}, State};
+        [] ->
+            {reply, {error, not_found}, State}
+    end;
+
+handle_call({start_waiter, WaiterId}, _From, State) ->
+    Result = waiter_sup:start_waiter(WaiterId),
+    {reply, Result, State};
+
+handle_call({upgrade_waiter, WaiterId}, _From, State) ->
+    Result = waiter_sup:upgrade_waiter(WaiterId),
+    {reply, Result, State};
 
 handle_call(_Request, _From, State) ->
     {reply, {error, not_implemented}, State}.

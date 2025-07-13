@@ -16,7 +16,7 @@
 %%%===================================================================
 
 start_link(RestoredCustomers) -> % שונה ל-arity 1
-    gen_server:start_link({local, ?MODULE}, ?MODULE, RestoredCustomers, []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, RestoredCustomers, []).
 
 send_state_to_safe() ->
     gen_server:cast(?MODULE, send_report).

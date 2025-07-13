@@ -14,9 +14,9 @@
 %%% Public API
 %%%=======================
 
-start_link(MachineId) -> %create machine
+start_link({MachineId, Pos}) -> %create machine
     Name = {?MODULE, MachineId},
-    gen_statem:start_link({global, Name}, ?MODULE, MachineId, []).
+    gen_statem:start_link({global, Name}, ?MODULE, {MachineId, Pos}, []).
 
 machine_order(MachineId, Order) -> %sendin msg to create order
     Name = {?MODULE, MachineId},
@@ -30,12 +30,12 @@ upgrade(MachineId) -> %sending msg to upgrade
 %%% State Functions
 %%%=======================
 
-init(MachineId) ->
+init({MachineId, Pos}) ->
     erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     case ets:lookup(machine_state, MachineId) of
         [{_, SavedState}] ->
             io:format("Restoring machine ~p from ETS~n", [MachineId]),
-            State = SavedState#{machine_id => MachineId, pid => self(), state_name => maps:get(state_name, SavedState, idle)},
+            State = SavedState#{machine_id => MachineId, pid => self(), machine_pos => Pos, state_name => maps:get(state_name, SavedState, idle)},
             StateName = maps:get(state_name, SavedState, idle),
             case StateName of
                 cooking ->
@@ -54,13 +54,16 @@ init(MachineId) ->
                 pid => self(), 
                 current_order => undefined, 
                 upgrade_level => 0,
-                state_name => idle
+                state_name => idle,
+                machine_pos => Pos,
+                order_pos => Pos
             },
             
             % *** התיקון הקריטי כאן: שמור את המצב המלא מיד עם ההתחלה ***
             send_heartbeat(State),
 
             gen_server:cast({global, order_registry}, {machine_ready, MachineId}),
+            gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, machine, MachineId, Pos, idle}}),
             {ok, idle, State}
     end.
 
@@ -78,10 +81,10 @@ code_change(_OldVsn, StateName, State, _Extra) -> %opt function
 %%% Time per upgrade level
 %%%=======================
 
-machine_time(0) -> 3000;  % 3sec
-machine_time(1) -> 2000;  % 2sec
-machine_time(2) -> 1000;  % 1sec
-machine_time(_) -> 1000.  % 1sec
+machine_time(0) -> 5000;  % 5sec
+machine_time(1) -> 4000;  % 4sec
+machine_time(2) -> 3000;  % 3sec
+machine_time(_) -> 3000.  % 3sec
 
 %%%=======================
 %%% IDLE State
@@ -95,8 +98,9 @@ idle(cast, {machine_order, Order}, State) ->
     Upgrade = maps:get(upgrade_level, State, 0),
     Delay = machine_time(Upgrade),
     timer:send_after(Delay, {cooking_done, Order}), %send when done cooking
-    NewState = State#{current_order := Order},
+    NewState = State#{current_order := Order, order_pos => maps:get(table_pos, Order)},
     machine_sup:update_machine_state(maps:get(machine_id, NewState), NewState),
+    gen_server:cast({global, socket_server},{gui_update, update_state, machine, maps:get(machine_id, NewState), busy,maps:get(machine_pos, NewState)}),
     {next_state, cooking, NewState};
 
 idle(cast, upgrade, State) ->
@@ -131,7 +135,8 @@ cooking(info, {cooking_done, Order}, State) ->
                 type => serve_meal, 
                 table_id => TableId, 
                 client_id => CustomerId, 
-                meal => Meal
+                meal => Meal,
+                table_pos => maps:get(order_pos, NewState)
             },
             gen_server:cast({global, task_registry}, {add_task, Task}),
             io:format("[machine_fsm] Added 'serve_meal' task to waiter queue for customer ~p at table ~p~n", [CustomerId, TableId]);
@@ -139,6 +144,7 @@ cooking(info, {cooking_done, Order}, State) ->
             io:format("[machine_fsm] Invalid order format or missing details in order: ~p~n", [Order])
     end,
     gen_server:cast({global, order_registry}, {machine_ready, maps:get(machine_id, State)}),
+    gen_server:cast({global, socket_server},{gui_update, update_state, machine, maps:get(machine_id, NewState), idle,maps:get(machine_pos, NewState)}),
     {next_state, idle, NewState};
 
 cooking(cast, upgrade, State) ->

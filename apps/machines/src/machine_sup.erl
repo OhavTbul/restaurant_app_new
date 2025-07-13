@@ -61,23 +61,28 @@ init([]) ->
     % הפעלה מחדש של כל המכונות שנשמרו
     AllRestoredMachines = ets:tab2list(?TABLE),
     ChildSpecs = [
-        { {machine_fsm, MachineId}, {machine_fsm, start_link, [MachineId]}, transient, 5000, worker, [machine_fsm] }
-        || {MachineId, _} <- AllRestoredMachines
+        % קולט את המפה המלאה של מצב המכונה
+        { {machine_fsm, MachineId}, {machine_fsm, start_link, [{MachineId, maps:get(pos, StateMap)}]}, transient, 5000, worker, [machine_fsm] }
+        % מריץ לולאה על כל רשומת ETS, שצורתה {MachineId, StateMap}
+        || {MachineId, StateMap} <- AllRestoredMachines
     ],
 
     {ok, {{one_for_one, 5, 10}, [MngSpec | ChildSpecs]}}.
+
+
 
 %%%===================
 %%% create new machine
 %%%===================
 
-start_cook(MachineId) ->
+start_cook({MachineId, Pos}) ->
+    io:format("[machine_sup] creating machine ~p~n", [MachineId]),
     %% new fsm
     ChildId = {machine_fsm, MachineId},
 
     ChildSpec = {
         ChildId,                                    
-        {machine_fsm, start_link, [MachineId]},     
+        {machine_fsm, start_link, [{MachineId, Pos}]},     
         transient,                                  
         5000,                                      
         worker,                                     

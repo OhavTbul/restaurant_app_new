@@ -29,6 +29,8 @@
 
 % Define ETS table for waiter state
 -define(TABLE, waiter_state).
+-define(IDLE_POS, {30, 2}).  % todo_maybe change
+-define(KITCHEN_POS, {2, 40}).  % todo_maybe change
 
 
 %%%===================================================================
@@ -89,7 +91,6 @@ init(WaiterId) ->
                     {ok, send_order, State, {state_timeout, 20000, customer_reply_timeout}};
 
                 pick_up_meal ->
-                    % This is an instant state, so we move to the next logical one
                     TotalTime = get_adjusted_time(walk, SpeedLevel) + get_adjusted_time(serve, SpeedLevel),
                     {ok, serving, State, {state_timeout, TotalTime, total_time}};
 
@@ -113,11 +114,14 @@ init(WaiterId) ->
                 current_client_id  => undefined,
                 current_table_id => undefined,
                 current_meal => undefined,
-                state_name => idle
+                state_name => idle,
+                pos => ?IDLE_POS,
+                serve_table_pos => ?IDLE_POS
             },
             send_heartbeat(State),
             erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
             gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
+            gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, waiter, WaiterId, ?IDLE_POS, idle}}),
             {ok, idle, State}
     end.
 
@@ -192,14 +196,20 @@ idle(cast, {task, TaskMap}, State) when is_map(TaskMap) ->
 
     case maps:get(type, TaskMap) of
         take_order ->
+            Tpos = maps:get(table_pos, TaskMap),
             io:format("[waiter_fsm] Waiter ~p assigned to take order from table ~p (walk + order).~n", [WaiterId, TableId]),
-            NewState = State#{current_table_id := TableId, current_client_id := ClientId, current_task := {take_order, TableId},state_name => taking_order},
+            %todo : send to gui the new pos
+            NewState = State#{current_table_id := TableId, current_client_id := ClientId, pos => Tpos, current_task := {take_order, TableId},state_name => taking_order},
+            gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
             {next_state, taking_order, NewState, {state_timeout, WalkTime, get_to_table_timeout}};
 
         serve_meal ->
+            Tpos = maps:get(table_pos, TaskMap),
             Meal = maps:get(meal, TaskMap), % Assuming the meal is passed in the task map
             io:format("[waiter_fsm] Waiter ~p received task to serve meal ~p to table ~p.~n", [WaiterId, Meal, TableId]),
-            NewState = State#{current_table_id := TableId, current_client_id := ClientId, current_meal := Meal, current_task := {serve_meal, TableId, Meal},state_name => pick_up_meal},
+            %todo : send to gui the new pos
+            NewState = State#{current_table_id := TableId, pos => ?KITCHEN_POS, serve_table_pos =>Tpos, current_client_id := ClientId, current_meal := Meal, current_task := {serve_meal, TableId, Meal},state_name => pick_up_meal},
+            gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
             {next_state, pick_up_meal, NewState, {state_timeout, WalkTime, walk_time}};
             
         _Other ->
@@ -234,7 +244,7 @@ taking_order(state_timeout, get_to_table_timeout, State) ->
     io:format("[waiter_fsm] Waiter ~p start taking order from table ~p.~n", [WaiterId, TableId]),
     gen_server:cast({global, {customer_fsm,ClientId}}, {take_order,WaiterId}),
     NewState = State#{state_name => send_order},
-    {next_state, send_order, NewState, {state_timeout, 20000, customer_reply_timeout}};
+    {next_state, send_order, NewState, {state_timeout, 5000, customer_reply_timeout}};
 
 taking_order(cast, upgrade, State) ->
     WaiterId = maps:get(waiter_id, State),
@@ -258,8 +268,9 @@ send_order(cast, {client_order, Order}, State) ->
     WaiterId = maps:get(waiter_id, State),
     io:format("[waiter_fsm] Waiter ~p send meal to order queue.~n", [WaiterId]),
     gen_server:cast({global, order_registry}, {add_order,Order}),
-    NewState = State#{current_task => undefined, current_meal => undefined, current_table_id => undefined, current_client_id => undefined,state_name => idle},
+    NewState = State#{current_task => undefined, current_meal => undefined, pos => ?IDLE_POS, current_table_id => undefined, current_client_id => undefined,state_name => idle},
     gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
+    gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
     {next_state, idle, NewState};
 
 
@@ -269,7 +280,8 @@ send_order(state_timeout, customer_reply_timeout, State) ->
     TableId = maps:get(current_table_id, State),
     io:format("[waiter_fsm] Waiter ~p: Customer at table ~p did not respond (timeout). Returning to idle.~n", [WaiterId, TableId]),
     gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
-    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined, current_client_id := undefined,state_name => idle},
+    NewState = State#{current_task := undefined, pos => ?IDLE_POS, current_meal := undefined, current_table_id := undefined, current_client_id := undefined,state_name => idle},
+    gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
     {next_state, idle, NewState};
 
 send_order(cast, upgrade, State) ->
@@ -289,7 +301,13 @@ pick_up_meal(info, heartbeat_tick, State) ->
     erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
-pick_up_meal(_Type, _Event, State) -> % Instant transition, no timeout
+pick_up_meal(state_timeout, walk_time, State) ->
+    io:format("[waiter_fsm] enter pick_up_meal~n", []),
+    gen_server:cast({global, socket_server},{gui_update, update_state, waiter, maps:get(waiter_id, State), busy,maps:get(pos, State)}),
+    {keep_state, State, {state_timeout, 1000, wait_to_serve}};
+
+
+pick_up_meal(state_timeout, wait_to_serve, State) ->
     WaiterId = maps:get(waiter_id, State),
     TableId = maps:get(current_table_id, State),
     Meal = maps:get(current_meal, State), % Assuming meal info is in state for serving task
@@ -298,9 +316,12 @@ pick_up_meal(_Type, _Event, State) -> % Instant transition, no timeout
     WalkTime = get_adjusted_time(walk, SpeedLevel), % Pass 'walk' as ActionType
     ServeTime = get_adjusted_time(serve, SpeedLevel), 
     TotalTime = WalkTime + ServeTime,
-    NewState = State#{state_name => serving},
-    {next_state, serving, NewState, {state_timeout, TotalTime, total_time}}.
+    NewState = State#{state_name => serving, pos => maps:get(serve_table_pos, State)},
+    gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, busy,maps:get(pos, NewState)}),
+    {next_state, serving, NewState, {state_timeout, TotalTime, total_time}};
 
+pick_up_meal(_Type, _Event, State) ->
+    {keep_state, State}.
 %%%--- SERVING
 serving(info, heartbeat_tick, State) ->
     send_heartbeat(State),
@@ -314,8 +335,9 @@ serving(state_timeout, total_time, State) ->
     Meal = maps:get(current_meal, State),
     io:format("[waiter_fsm] Waiter ~p finished serving meal ~p to table ~p. Returning to idle.~n", [WaiterId, Meal, TableId]),
     gen_server:cast({global, {customer_fsm,ClientId}}, food_arrived),
-    NewState = State#{current_task := undefined, current_meal := undefined, current_table_id := undefined, current_client_id := undefined,state_name => idle},
+    NewState = State#{current_task := undefined, pos => ?IDLE_POS, current_meal := undefined, current_table_id := undefined, current_client_id := undefined,state_name => idle},
     gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
+    gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
     {next_state, idle, NewState};
 
 serving(cast, upgrade, State) ->

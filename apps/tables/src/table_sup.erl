@@ -70,10 +70,12 @@ init([]) ->
 
     %הפעלה מחדש של כל השולחנות שנשמרו
     AllRestoredTables = ets:tab2list(?TABLE),
-    TableChildSpecs = [
-        { {table_fsm, TableId}, {table_fsm, start_link, [TableId]}, transient, 5000, worker, [table_fsm] }
-        || {TableId, _} <- AllRestoredTables
-    ],
+        TableChildSpecs = [
+            % קולט את המפה המלאה של מצב השולחן
+            { {table_fsm, TableId}, {table_fsm, start_link, [{TableId, maps:get(pos, StateMap)}]}, transient, 5000, worker, [table_fsm] }
+            % מריץ לולאה על כל רשומת ETS, שצורתה {TableId, StateMap}
+            || {TableId, StateMap} <- AllRestoredTables
+        ],
 
     %הרכבת הרשימה הסופית של כל הילדים
     ChildSpecs = [MngSpec, RegistrySpec | TableChildSpecs],
@@ -81,13 +83,13 @@ init([]) ->
     {ok, {{one_for_one, 5, 10}, ChildSpecs}}.
 
 
-start_table(TableId) -> %create new table
+start_table({TableId, Pos}) -> %create new table
     %% new fsm
     ChildId = {table_fsm, TableId},
 
     ChildSpec = {
         ChildId,
-        {table_fsm, start_link, [TableId]},
+        {table_fsm, start_link, [{TableId, Pos}]},
         transient,
         5000,
         worker,

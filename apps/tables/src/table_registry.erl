@@ -67,6 +67,7 @@ handle_cast({cancel_request, CustomerId}, State) ->
     io:format("[table_registry] Customer ~p cancelled their request and was removed from the queue.~n", [CustomerId]),
     {noreply, State#{queue => NewQ}}.
 
+
 handle_info(_, State) -> {noreply, State}.
 
 % --- handle_call clauses (must be contiguous and ordered from most specific to least specific) ---

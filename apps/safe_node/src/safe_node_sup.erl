@@ -35,7 +35,12 @@ init([]) ->
          permanent, 5000, worker, [player]},
         
         {cashier, {cashier, start_link, []},
-         permanent, 5000, worker, [cashier]}
+         permanent, 5000, worker, [cashier]},
+
+        {socket_server, {socket_server, start_link, []},
+         permanent, 5000, worker, [socket_server]}
+
+         
     ],
 
     % הגדרת מדיניות השגחה - one_for_one מאפשר לנהל ילדים נוספים דינמית

@@ -6,7 +6,7 @@
 -export([send_state_to_safe/0]).
 
 %% gen_server callbacks
--export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3]).
+-export([init/1, handle_info/2, handle_call/3, handle_cast/2, terminate/2, code_change/3, get_level/1]).
 
 -define(TABLE, machine_state).
 -define(REPORT_INTERVAL, 10000). % 10 sec
@@ -16,10 +16,13 @@
 %%%===================================================================
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 send_state_to_safe() ->
     gen_server:cast(?MODULE, send_report).
+
+get_level(MachineId) ->
+    gen_server:call({global, ?MODULE}, {get_level, MachineId}).
 
 %%%===================================================================
 %%% gen_server callbacks
@@ -50,6 +53,23 @@ handle_cast(send_report, State) ->
 
 handle_cast(_, State) ->
     {noreply, State}.
+
+handle_call({get_level, MachineId}, _From, State) ->
+    case ets:lookup(?TABLE, MachineId) of
+        [{_Id, Map}] ->
+            Level = maps:get(upgrade_level, Map, 0),
+            {reply, {ok, Level}, State};
+        [] ->
+            {reply, {error, not_found}, State}
+    end;
+
+handle_call({start_cook, {MachineId, Pos}}, _From, State) ->
+    Result = machine_sup:start_cook({MachineId, Pos}),
+    {reply, Result, State};
+
+handle_call({upgrade_machine, MachineId}, _From, State) ->
+    Result = machine_sup:upgrade_machine(MachineId),
+    {reply, Result, State};
 
 handle_call(_Request, _From, State) ->
     {reply, {error, not_implemented}, State}.

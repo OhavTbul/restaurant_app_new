@@ -13,17 +13,13 @@ wait_until_global(Name) ->
     end.
 
 start() ->
-     %% המתנה עד ש-state_controller מוכן
-    wait_until_global(state_controller),
-    application:start(machines),
-
-    %% התחברות ל-nodes הדרושים
-    net_kernel:connect_node('safe_node@127.0.0.1'),
     net_kernel:connect_node('tables_node@127.0.0.1'),
     net_kernel:connect_node('customers_node@127.0.0.1'),
+    net_kernel:connect_node('waiters_node@127.0.0.1'),
+    net_kernel:connect_node('safe_node@127.0.0.1'),
+     %% המתנה עד ש-state_controller מוכן
+    wait_until_global(state_controller),
+    application:start(machines).
 
-   
 
-    %% הפעלת מכונות
-    machine_sup:start_cook(machine1),
-    machine_sup:start_cook(machine2).
+

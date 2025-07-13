@@ -12,9 +12,11 @@
 
 %% Macros
 -define(TABLE_TIMEOUT, 25000). % 25sec (Increased for debugging)
--define(ORDER_TIMEOUT, 20000). % 20sec
+-define(ORDER_TIMEOUT, 40000). % 40sec
 -define(EAT_TIMEOUT, 4000).  % 4sec
 -define(HEARTBEAT_INTERVAL, 3000).  % 3sec
+-define(START_POS, {0, 0}).  % todo_change
+-define(END_POS, {0, 0}).  % todo_change
 
 %%%===================
 %%% API
@@ -72,11 +74,12 @@ init(ClientId) ->
         [] ->
             io:format("Customer ~p entered and waiting for table.~n", [ClientId]),
             gen_server:cast({global, table_registry}, {request_table, ClientId}),
-            State = #{client_id => ClientId, pid => self(),pos => {0, 0}, state_name => idle},
+            State = #{client_id => ClientId, pid => self(),pos => ?START_POS, state_name => idle, table_pos => ?START_POS,waiter_pos => ?START_POS},
             send_heartbeat(State),
 
             io:format("[DEBUG] Sending request_table to table_registry for customer ~p~n", [ClientId]),
             erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+            gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, customer, ClientId, ?START_POS, idle}}),
             {ok, idle, State, {state_timeout, ?TABLE_TIMEOUT, timeout_table}}
     end.
 
@@ -107,23 +110,24 @@ idle(info, heartbeat_tick, State) ->
     erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
-idle(cast, {assign_table, TableId}, State) -> % customer got table
+idle(cast, {assign_table, TableId, TablePos}, State) -> % customer got table
     ClientId = maps:get(client_id, State),
     io:format("Customer ~p assigned to table ~p~n", [ClientId, TableId]),
-    %% table POS known by table id
-    TablePos = {0,0},  %% TODO: replace with real position later
-    NewState = State#{table => TableId, pos => TablePos, state_name => seated},
+    {GuiPosT, GuiPosC, GuiPosW} = TablePos,
+    NewState = State#{table => TableId, pos => GuiPosC, table_pos=> GuiPosT, waiter_pos => GuiPosW,state_name => seated},
     send_heartbeat(NewState),
-    Task = #{type => take_order, table_id => TableId, client_id => ClientId},
+    Task = #{type => take_order, table_id => TableId, client_id => ClientId, table_pos => GuiPosW},
     gen_server:cast({global, task_registry}, {add_task, Task}),
     io:format("Customer ~p sent take_order task.~n", [ClientId]),
+    gen_server:cast({global, socket_server}, {gui_update, update_state, customer, ClientId, seated, maps:get(pos, NewState)}),
     {next_state, seated, NewState, {state_timeout, ?ORDER_TIMEOUT, timeout_order}};
 
 idle(state_timeout, timeout_table, State) -> %table timeout
     CustomerId = maps:get(client_id, State),
     io:format("Customer ~p gave up waiting for table (TIMEOUT). Sending cancel request.~n", [CustomerId]),
     gen_server:cast({global, table_registry}, {cancel_request, CustomerId}),
-    NewState = State#{state_name => leaving},
+    NewState = State#{state_name => leaving, pos => ?END_POS},
+    gen_server:cast({global, socket_server}, {gui_update, update_state, customer, CustomerId, idle, ?END_POS}),
     send_heartbeat(NewState),
     {next_state, leaving, NewState};
 
@@ -141,7 +145,7 @@ seated(cast, {take_order, WaiterId}, State) ->
     TableId = maps:get(table, State),
     MenuItem = pizza,
     NewState1 = State#{waiter => WaiterId, order => MenuItem,state_name => waiting_food},
-    Order = #{meal => MenuItem, table_id => TableId, client_id => ClientId},
+    Order = #{meal => MenuItem, table_id => TableId, client_id => ClientId, table_pos => maps:get(waiter_pos, State)},
     gen_statem:cast({global, {waiter_fsm, WaiterId}}, {client_order, Order}),
     io:format("Customer ~p (waiter ~p) ordered ~p and sent to waiter ~p~n", [ClientId, WaiterId, MenuItem, WaiterId]),
     send_heartbeat(NewState1),
@@ -156,12 +160,13 @@ seated(state_timeout, timeout_order, State) -> %order timeout
         undefined ->
             io:format("Customer ~p leaving without assigned table.~n", [CustomerId]);
         _ ->
-            gen_statem:cast({global, {table_fsm, TableId}}, {free_table, CustomerId}),
+            gen_statem:cast({global, {table_fsm, TableId}}, {free_table_timeout, CustomerId}),
             io:format("Customer ~p sent free_table message to table ~p.~n", [CustomerId, TableId])
     end,
     gen_statem:cast({global, task_registry}, {cancel_task, CustomerId}),
     io:format("Customer ~p canceled task.~n", [CustomerId]),
-    NewState = State#{state_name => leaving},
+    NewState = State#{state_name => leaving, pos => ?END_POS},
+    gen_server:cast({global, socket_server}, {gui_update, update_state, customer, CustomerId, idle, ?END_POS}),
     send_heartbeat(NewState),
     {next_state, leaving, NewState};
 
@@ -230,9 +235,8 @@ paying(cast, paid, State) ->
             gen_statem:cast({global, {table_fsm, TableId}}, {free_table, ClientId}),
             io:format("Customer ~p sent free_table message to table ~p.~n", [ClientId, TableId])
     end,
-    %known pos to exit
-    ExitPos = {999, 999}, %todo chane exit?
-    NewState = State#{pos => ExitPos, state_name => leaving},
+    NewState = State#{pos => ?END_POS, state_name => leaving},
+    gen_server:cast({global, socket_server}, {gui_update, update_state, customer, ClientId, idle, ?END_POS}),
     send_heartbeat(NewState),
     {next_state, leaving, NewState};
 

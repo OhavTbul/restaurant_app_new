@@ -7,7 +7,7 @@
     upgrade_waiter/1, add_waiter/0,
     upgrade_machine/1, add_machine/0,
     get_prices/0, get_waiters/0,
-    show_tables/0, show_waiters/0, show_machines/0
+    show_tables/0, show_waiters/0, show_machines/0,start_game/0
 ]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 -export([
@@ -31,7 +31,9 @@
     waiter_counter = 0,
     machine_counter = 0,
     prices = #prices{},
-    dirty_tables = []
+    dirty_tables = [],
+    table_pos = #{},  
+    machine_pos = #{}
 }).
 
 %%% ================================
@@ -55,14 +57,117 @@ dirty_table_notification(TableId) -> gen_server:cast({global, ?MODULE}, {dirty_t
 clean_dirty_table(TableId) ->
     gen_server:call({global, ?MODULE}, {clean_dirty_table, TableId}).
 
+start_game() -> gen_server:call(?MODULE, rquest_start_game).
+
+
+%%% ================================
+%%% list_to_map
+%%% ================================
+
+list_to_map([], _Counter, Map) ->
+    Map;
+list_to_map([Coord | Rest], Counter, Map) ->
+    list_to_map(Rest, Counter + 1, Map#{Counter => Coord}).
+
 %%% ================================
 %%% gen_server callbacks
 %%% ================================
 
 init([]) ->
     io:format("start player~n", []),
-    {ok, #state{}}.
 
+    % נניח שאנחנו רוצים למקם שולחנות החל מ־Row 5 ו־Col 5
+    RowStart = 5,
+    ColStart = 5,
+    RowGap = 3, % כל שולחן תופס 2×2 (לכן קפיצה של 3)
+    ColGap = 3,
+
+    % מספר שורות וטורים של שולחנות (לדוגמה 10×15)
+    NumRows = 10,
+    NumCols = 15,
+
+    % בונה את כל המיקומים
+    TableCoords = generate_table_coords(RowStart, ColStart, RowGap, ColGap, NumRows, NumCols, 1, []),
+
+    Tmap = maps:from_list(TableCoords),
+
+    % מכונות באזור עליון
+    MachineCoords  = [ {Row, Col} || Row <- lists:seq(0, 4), Col <- lists:seq(40, 49) ],
+    Mmap = list_to_map(MachineCoords , 1, #{}),
+
+    {ok, #state{table_pos = Tmap, machine_pos = Mmap}}.
+
+% פונקציה רקורסיבית ליצירת רשימת מיקומים
+generate_table_coords(_, _, _, _, 0, _, _, Acc) -> Acc;
+generate_table_coords(RowStart, ColStart, RowGap, ColGap, RowCount, ColCount, ID, Acc) ->
+    Row = RowStart + RowGap * (10 - RowCount), % כל שורה בקפיצה
+    {NewAcc, NewID} = generate_table_row(Row, ColStart, ColGap, ColCount, ID, Acc),
+    generate_table_coords(RowStart, ColStart, RowGap, ColGap, RowCount - 1, ColCount, NewID, NewAcc).
+
+generate_table_row(_, _, _, 0, ID, Acc) -> {Acc, ID};
+generate_table_row(Row, ColStart, ColGap, ColCount, ID, Acc) ->
+    Col = ColStart + ColGap * (15 - ColCount),
+    TablePos = {Row, Col},                        % ימנית עליונה
+    CustomerPos = {Row, Col - 1},                 % שמאלית עליונה
+    WaiterPos = {Row + 1, Col - 1},               % שמאלית תחתונה
+    Entry = {ID, {TablePos, CustomerPos, WaiterPos}},
+    generate_table_row(Row, ColStart, ColGap, ColCount - 1, ID + 1, [Entry | Acc]).
+
+
+handle_call(rquest_start_game, _From, State) ->
+    io:format("Player starting customers application remotely...~n"),
+    
+    % מנסה להתחיל את היישום על צומת הלקוחות
+    Result = rpc:call('customers_node@127.0.0.1', application, start, [customers]),
+    
+    % בודק האם הקריאה נכשלה
+    if
+        Result =/= ok ->
+            io:format("ERROR: Failed to start customers application: ~p~n", [Result]),
+            {reply, {error, failed_to_start_customers}, State};
+        true ->
+            % אם הצליח, ממשיך לשאר הלוגיקה
+            Tcount = State#state.table_counter,
+            Wcount = State#state.waiter_counter,
+            Mcount = State#state.machine_counter,
+            Table1 = list_to_atom("table_" ++ integer_to_list(Tcount + 1)),
+            PosT1 = maps:get(Tcount + 1, State#state.table_pos),
+            PosT2 = maps:get(Tcount + 2, State#state.table_pos),
+            PosM1 = maps:get(Mcount + 1, State#state.machine_pos),
+            Table2 = list_to_atom("table_" ++ integer_to_list(Tcount + 2)),
+            Mchine1 = list_to_atom("machine_" ++ integer_to_list(Mcount + 1)),
+            Waiter1 = list_to_atom("waiter_" ++ integer_to_list(Wcount + 1)),
+            
+            case gen_server:call({global, table_mng}, {start_table, {Table1, PosT1}}) of
+                ok ->
+                    io:format("Table ~p added successfully~n", [Table1]),
+                    State1 = State#state{table_counter = Tcount + 1},
+                    case gen_server:call({global, table_mng}, {start_table, {Table2, PosT2}}) of
+                        ok ->
+                            io:format("Table ~p added successfully~n", [Table2]),
+                            State2 = State1#state{table_counter = Tcount + 2},
+                            case gen_server:call({global, waiter_mng}, {start_waiter, Waiter1}) of
+                                ok ->
+                                    io:format("waiter ~p added successfully~n", [Waiter1]),
+                                    State3 = State2#state{waiter_counter = Wcount + 1},
+                                    case gen_server:call({global, machine_mng}, {start_cook, {Mchine1, PosM1}}) of
+                                        ok ->
+                                            io:format("machine ~p added successfully~n", [Mchine1]),
+                                            State4 = State3#state{machine_counter = Mcount + 1},
+                                            {reply, ok, State4};
+                                        {error, Reason} ->
+                                            {reply, {error, Reason}, State3}
+                                    end;
+                                {error, Reason} ->
+                                    {reply, {error, Reason}, State2}
+                            end;
+                        {error, Reason} ->
+                            {reply, {error, Reason}, State1}
+                    end;
+                {error, Reason} ->
+                    {reply, {error, Reason}, State}
+            end
+    end;
 
 
 handle_call(add_table, _From, State) ->
@@ -87,6 +192,18 @@ handle_call(add_machine, _From, State) ->
 
 handle_call(get_prices, _From, State) ->
     {reply, State#state.prices, State};
+
+handle_call({get_price, Type}, _From, State = #state{prices = Prices}) ->
+    Price = case Type of
+        add_table -> Prices#prices.add_table;
+        upgrade_waiter -> Prices#prices.upgrade_waiter;
+        add_waiter -> Prices#prices.add_waiter;
+        upgrade_machine -> Prices#prices.upgrade_machine;
+        add_machine -> Prices#prices.add_machine;
+        _ -> 0
+    end,
+    {reply, Price, State};
+
 
 handle_call(get_waiters, _From, State) ->
     {reply, State#state.waiter_counter, State};
@@ -121,6 +238,9 @@ handle_call({clean_dirty_table, TableId}, _From, State = #state{dirty_tables = D
             io:format("Table ~p is not dirty or already being cleaned.~n", [TableId]),
             {reply, {error, not_dirty}, State}
     end;
+
+
+
 
 handle_call(_Request, _From, State) ->
     {reply, {error, unknown_request}, State}.
@@ -187,26 +307,18 @@ increase_price({do_upgrade_specific_machine, _MachineId}, State) ->
 
 do_add_table(State = #state{table_counter = Counter}) ->
     TableId = list_to_atom("table_" ++ integer_to_list(Counter + 1)),
-    % Check if table already exists by looking up in ETS
-    case ets:lookup(table_state_ets, TableId) of
-        [] ->
-            % Table doesn't exist, try to create it
-            case table_sup:start_table(TableId) of
-                ok ->
-                    io:format("Table ~p added successfully~n", [TableId]),
-                    State#state{table_counter = Counter + 1};
-                {error, Reason} ->
-                    io:format("Failed to add table ~p: ~p~n", [TableId, Reason]),
-                    State
-            end;
-        [_] ->
-            % Table already exists
-            io:format("Cannot upgrade. Table ~p already exists.~n", [TableId]),
+    PosT = maps:get(Counter + 1, State#state.table_pos),
+    case gen_server:call({global, table_mng}, {start_table, {TableId, PosT}}) of
+        ok ->
+            io:format("Table ~p added successfully~n", [TableId]),
+            State#state{table_counter = Counter + 1};
+        {error, Reason} ->
+            io:format("Failed to add table ~p: ~p~n", [TableId, Reason]),
             State
     end.
 
 do_upgrade_specific_waiter(WaiterId, State) ->
-    case waiter_sup:upgrade_waiter(WaiterId) of
+    case gen_server:call({global, waiter_mng}, {upgrade_waiter, WaiterId}) of
         ok ->
             io:format("Waiter ~p upgraded successfully~n", [WaiterId]),
             State;
@@ -217,10 +329,11 @@ do_upgrade_specific_waiter(WaiterId, State) ->
 
 do_add_waiter(State = #state{waiter_counter = Counter}) ->
     WaiterId = list_to_atom("waiter_" ++ integer_to_list(Counter + 1)),
-    case waiter_sup:start_waiter(WaiterId) of
+    case gen_server:call({global, waiter_mng}, {start_waiter, WaiterId}) of
         ok ->
             io:format("Waiter ~p added successfully~n", [WaiterId]),
             State#state{waiter_counter = Counter + 1};
+            
         {error, Reason} ->
             io:format("Failed to add waiter ~p: ~p~n", [WaiterId, Reason]),
             State
@@ -234,7 +347,7 @@ do_upgrade_machine(State) ->
     State.
 
 do_upgrade_specific_machine(MachineId, State) ->
-    case machine_sup:upgrade_machine(MachineId) of
+    case gen_server:call({global, machine_mng}, {upgrade_machine, MachineId}) of
         ok ->
             io:format("Machine ~p upgraded successfully~n", [MachineId]),
             State;
@@ -245,10 +358,12 @@ do_upgrade_specific_machine(MachineId, State) ->
 
 do_add_machine(State = #state{machine_counter = Counter}) ->
     MachineId = list_to_atom("machine_" ++ integer_to_list(Counter + 1)),
-    case machine_sup:start_cook(MachineId) of
+    PosM = maps:get(Counter + 1, State#state.machine_pos),
+    case gen_server:call({global, machine_mng}, {start_cook, {MachineId, PosM}}) of
         ok ->
             io:format("Machine ~p added successfully~n", [MachineId]),
             State#state{machine_counter = Counter + 1};
+            
         {error, Reason} ->
             io:format("Failed to add machine ~p: ~p~n", [MachineId, Reason]),
             State

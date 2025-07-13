@@ -16,7 +16,7 @@
 %%%===================================================================
 
 start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+    gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 send_state_to_safe() ->
     gen_server:cast(?MODULE, send_report).
@@ -51,6 +51,10 @@ handle_cast(send_report, State) ->
 handle_cast(_, State) ->
     {noreply, State}.
 
+handle_call({start_table, {TableId, Pos}}, _From, State) ->
+    Result = table_sup:start_table({TableId, Pos}),
+    {reply, Result, State};
+
 handle_call(_Request, _From, State) ->
     {reply, {error, not_implemented}, State}.
 
@@ -59,3 +63,6 @@ terminate(_Reason, _State) ->
 
 code_change(_OldVsn, State, _Extra) ->
     {ok, State}.
+
+
+
