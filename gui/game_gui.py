@@ -142,6 +142,10 @@ class GameGUI:
         self.confirm_add_button = None       # כפתור "הוסף"
         self.cancel_add_button = None        # כפתור "בטל"
 
+        self.upgrading_entity = False
+        self.upgrade_price_message = ""
+        self.confirm_upgrade_button = None
+        self.cancel_upgrade_button = None
 
 
         
@@ -200,6 +204,98 @@ class GameGUI:
                 self.screen.blit(text_surface, text_rect)
 
 
+    def draw_upgrade_popup(self):
+        if self.upgrading_entity:
+            overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 150))
+            self.screen.blit(overlay, (0, 0))
+
+            pygame.draw.rect(self.screen, LIGHT_GRAY, (SCREEN_WIDTH - 400, 200, 350, 150), border_radius=10)
+
+            if self.confirm_upgrade_button:
+                self.confirm_upgrade_button.draw(self.screen)
+            if self.cancel_upgrade_button:
+                self.cancel_upgrade_button.draw(self.screen)
+
+            if self.upgrade_price_message:
+                font = pygame.font.Font(None, 28)
+                text_surface = font.render(self.upgrade_price_message, True, RED)
+                text_rect = text_surface.get_rect(center=(SCREEN_WIDTH - 225, 330))
+                self.screen.blit(text_surface, text_rect)
+
+            def handle_popup_click(self, pos):
+                if self.popup and self.popup_buttons:
+                    for btn in self.popup_buttons:
+                        if btn.is_clicked(pos):
+                            btn.on_click()
+
+        def show_upgrade_popup(self, entity):
+            if entity.level >= 2:
+                # === הצגת פופ-אפ שאי אפשר לשדרג יותר ===
+                self.close_popup()
+                self.popup = pygame.Surface((300, 150))
+                self.popup.fill((240, 240, 240))
+                self.popup_rect = self.popup.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+
+                title = FONT_LARGE.render("unevelable", True, BLACK)
+                msg = FONT.render(f"{entity.id} max level", True, BLACK)
+
+                self.popup.blit(title, (50, 30))
+                self.popup.blit(msg, (30, 70))
+
+                ok_btn = Button((100, 100, 100, 35), RED, "close", WHITE, 22)
+                ok_btn.set_on_click(lambda: self.close_popup())
+                self.popup_buttons = [ok_btn]
+                return
+            # סוג הישות: waiter או machine
+            upgrade_type = "waiter" if entity.type == "waiter" else "machine"
+
+            # בקשת מחיר מהשרת
+            self.send_packet(f"player:get_price:upgrade_{upgrade_type}")
+            response = self.recv_packet()
+            try:
+                price = int(response)
+            except ValueError:
+                print("error", response)
+                return
+
+            # יצירת POPUP חדש
+            self.close_popup()
+            self.popup = pygame.Surface((300, 180))
+            self.popup.fill((240, 240, 240))
+            self.popup_rect = self.popup.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+
+            # כותרת
+            title = FONT_LARGE.render(f"upgrade {entity.id}", True, BLACK)
+            self.popup.blit(title, (20, 20))
+
+            # טקסט מחיר
+            price_text = FONT.render(f"upgade cost: {price}$", True, BLACK)
+            self.popup.blit(price_text, (20, 60))
+
+            # כפתור שדרוג
+            upgrade_btn = Button((30, 110, 100, 40), GREEN, "upgrade", WHITE, 24)
+            cancel_btn = Button((170, 110, 100, 40), RED, "cancle", WHITE, 24)
+
+            def on_upgrade():
+                self.send_packet(f"player:upgrade:{upgrade_type}:{entity.id}")
+                reply = self.recv_packet()
+                if reply == "ok":
+                    #entity.level += 1  # ניהול מקומי של רמה
+                    print(f"{entity.id}  upgtade to level {entity.level}")
+                else:
+                    print("error", reply)
+                self.close_popup()
+
+            def on_cancel():
+                self.close_popup()
+
+            upgrade_btn.set_on_click(on_upgrade)
+            cancel_btn.set_on_click(on_cancel)
+
+            self.popup_buttons = [upgrade_btn, cancel_btn]
+
+
 
 
     def draw_waiting_customers(self):
@@ -221,6 +317,7 @@ class GameGUI:
         self.screen.fill(BLACK)
         self.draw_grid()
         self.draw_add_popup()
+        self.draw_upgrade_popup()
 
 
         if not self.game_started:
@@ -298,7 +395,7 @@ class GameGUI:
 
                 else:
                     # ==========================
-                    # 1. חלון פתוח - אישור/ביטול
+                    # 1. חלון הוספה פתוח
                     # ==========================
                     if self.adding_entity:
                         if self.confirm_add_button and self.confirm_add_button.is_clicked(pos):
@@ -306,7 +403,6 @@ class GameGUI:
                             message = f"player:add:{self.selected_add_type}"
                             self.send_packet(message.encode('utf-8'))
 
-                            # איפוס מצב הפופאפ
                             self.adding_entity = False
                             self.selected_add_type = None
                             self.add_price = 0
@@ -324,13 +420,34 @@ class GameGUI:
                             self.cancel_add_button = None
 
                     # ==========================
-                    # 2. כפתורי שדרוג/ניקוי וישויות
+                    # 2. חלון שדרוג פתוח
+                    # ==========================
+                    elif self.upgrading_entity:
+                        if self.confirm_upgrade_button and self.confirm_upgrade_button.is_clicked(pos):
+                            print(f"Confirm upgrade clicked for {self.selected_entity.type}:{self.selected_entity.id}")
+                            self.send_upgrade_message(self.selected_entity.type, self.selected_entity.id)
+                            self.upgrading_entity = False
+                            self.confirm_upgrade_button = None
+                            self.cancel_upgrade_button = None
+                            self.upgrade_price_message = ""
+                            self.add_button = None
+
+                        elif self.cancel_upgrade_button and self.cancel_upgrade_button.is_clicked(pos):
+                            print("Upgrade cancelled")
+                            self.upgrading_entity = False
+                            self.confirm_upgrade_button = None
+                            self.cancel_upgrade_button = None
+                            self.upgrade_price_message = ""
+                            self.add_button = None
+
+                    # ==========================
+                    # 3. כפתורי ניקוי/שדרוג/לחיצה על ישות
                     # ==========================
                     else:
                         self.handle_game_click(pos)
 
                         # ==========================
-                        # 3. לחיצה על כפתורי ההוספה
+                        # 4. כפתורי הוספה
                         # ==========================
                         if self.add_table_button.is_clicked(pos):
                             print("Add Table button clicked")
@@ -349,6 +466,7 @@ class GameGUI:
                             self.selected_add_type = 'machine'
                             self.adding_entity = True
                             self.send_get_price_message('machine')
+
 
 
 
@@ -549,6 +667,9 @@ class GameGUI:
                 elif command == "not_enough_money":
                     self.popup_start_time = pygame.time.get_ticks() 
                     self.add_popup_message = "not_enough_money"
+                    self.upgrading_entity = False
+                    self.confirm_upgrade_button = None
+                    self.cancel_upgrade_button = None
 
                 elif command == "already_exists":
                     self.popup_start_time = pygame.time.get_ticks() 
@@ -557,6 +678,27 @@ class GameGUI:
                 elif command == "unknown_error":
                     self.popup_start_time = pygame.time.get_ticks() 
                     self.add_popup_message = "error:unknown"
+                    self.upgrading_entity = False
+                    self.confirm_upgrade_button = None
+                    self.cancel_upgrade_button = None
+
+                elif command == 'show_upgrade_button':
+                    entity_type = parts[2]
+                    price = int(parts[3])
+                    self.upgrading_entity = True
+                    self.upgrade_price_message = f"Upgrade {entity_type} will cost {price}$"
+                    self.confirm_upgrade_button = Button("Upgrade", SCREEN_WIDTH - 200, 260, 150, 50, GREEN, BLACK)
+                    self.cancel_upgrade_button = Button("Cancel", SCREEN_WIDTH - 370, 260, 150, 50, RED, BLACK)
+
+                elif command == "upgrade_approved":
+                    self.popup_start_time = pygame.time.get_ticks()
+                    self.add_popup_message = "upgrade_approved"
+                    self.upgrading_entity = False
+                    self.confirm_upgrade_button = None
+                    self.cancel_upgrade_button = None
+                    if self.selected_entity:
+                        self.selected_entity.level += 1
+                    print("[GUI] Upgrade approved.")
 
                 # --- אפשר להוסיף כאן הודעות אחרות לפי צורך ---
                 else:

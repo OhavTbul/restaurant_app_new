@@ -19,7 +19,7 @@ start_link() ->
     gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
 
 send_state_to_safe() ->
-    gen_server:cast(?MODULE, send_report).
+    gen_server:cast({global, ?MODULE}, send_report).
 
 get_level(WaiterId) ->
     gen_server:call({global, ?MODULE}, {get_level, WaiterId}).

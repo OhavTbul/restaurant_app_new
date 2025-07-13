@@ -158,16 +158,21 @@ handle_simple_command(_Socket, State, TargetAtom, CommandAtom) ->
     end,
     _Response = gen_server:call({global, TargetAtom}, CorrectedCommand),
     {noreply, State}.
+
+
 handle_upgrade(Socket, State, TypeAtom, IdAtom) ->
     FuncToCall = list_to_atom("upgrade_" ++ atom_to_list(TypeAtom)),
-    Response = apply(player, FuncToCall, [IdAtom]),
+    Response = gen_server:call({global, player}, {FuncToCall, IdAtom}),
+    io:format("[socket_server] upgrade player response  ~p ~n", [Response]),
     ReplyString = case Response of
-        {ok, upgrade_approved} -> "upgrade_approved";
-        {error, no_funds} -> "no_funds";
-        _ -> "unknown_error"
+        ok -> "gui:upgrade_approved";
+        {error,not_enough_money} -> "gui:not_enough_money";
+        _ -> "gui:unknown_error"
     end,
+    io:format("[socket_server] upgrade_response  ~p ~n", [ReplyString]),
     gen_tcp:send(Socket, list_to_binary(ReplyString)),
     {noreply, State}.
+
 
 handle_clean(Socket, State, TargetAtom, IdAtom) ->
     Response = gen_server:call({global, TargetAtom}, {clean_dirty_table, IdAtom}),

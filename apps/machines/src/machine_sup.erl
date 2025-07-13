@@ -62,7 +62,7 @@ init([]) ->
     AllRestoredMachines = ets:tab2list(?TABLE),
     ChildSpecs = [
         % קולט את המפה המלאה של מצב המכונה
-        { {machine_fsm, MachineId}, {machine_fsm, start_link, [{MachineId, maps:get(pos, StateMap)}]}, transient, 5000, worker, [machine_fsm] }
+        { {machine_fsm, MachineId}, {machine_fsm, start_link, [{MachineId, maps:get(machine_pos, StateMap)}]}, transient, 5000, worker, [machine_fsm] }
         % מריץ לולאה על כל רשומת ETS, שצורתה {MachineId, StateMap}
         || {MachineId, StateMap} <- AllRestoredMachines
     ],

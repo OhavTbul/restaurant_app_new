@@ -72,7 +72,7 @@ init([]) ->
     AllRestoredTables = ets:tab2list(?TABLE),
         TableChildSpecs = [
             % קולט את המפה המלאה של מצב השולחן
-            { {table_fsm, TableId}, {table_fsm, start_link, [{TableId, maps:get(pos, StateMap)}]}, transient, 5000, worker, [table_fsm] }
+            { {table_fsm, TableId}, {table_fsm, start_link, [{TableId, maps:get(table_pos, StateMap)}]}, transient, 5000, worker, [table_fsm] }
             % מריץ לולאה על כל רשומת ETS, שצורתה {TableId, StateMap}
             || {TableId, StateMap} <- AllRestoredTables
         ],
