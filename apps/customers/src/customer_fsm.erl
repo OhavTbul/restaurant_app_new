@@ -128,6 +128,7 @@ idle(state_timeout, timeout_table, State) -> %table timeout
     gen_server:cast({global, table_registry}, {cancel_request, CustomerId}),
     NewState = State#{state_name => leaving, pos => ?END_POS},
     gen_server:cast({global, socket_server}, {gui_update, update_state, customer, CustomerId, idle, ?END_POS}),
+    gen_server:cast({global, socket_server}, {gui_update, customer_cancelled, CustomerId}),
     send_heartbeat(NewState),
     {next_state, leaving, NewState};
 
@@ -167,6 +168,7 @@ seated(state_timeout, timeout_order, State) -> %order timeout
     io:format("Customer ~p canceled task.~n", [CustomerId]),
     NewState = State#{state_name => leaving, pos => ?END_POS},
     gen_server:cast({global, socket_server}, {gui_update, update_state, customer, CustomerId, idle, ?END_POS}),
+    gen_server:cast({global, socket_server}, {gui_update, customer_cancelled, CustomerId}),
     send_heartbeat(NewState),
     {next_state, leaving, NewState};
 

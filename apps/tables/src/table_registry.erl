@@ -65,6 +65,8 @@ handle_cast({cancel_request, CustomerId}, State) ->
     Queue = maps:get(queue, State),
     NewQ = queue:filter(fun(ID) -> ID =/= CustomerId end, Queue),
     io:format("[table_registry] Customer ~p cancelled their request and was removed from the queue.~n", [CustomerId]),
+    % Send GUI update to remove customer from queue display
+    gen_server:cast({global, socket_server}, {gui_update, customer_cancelled, CustomerId}),
     {noreply, State#{queue => NewQ}}.
 
 

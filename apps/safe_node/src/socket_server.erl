@@ -88,6 +88,12 @@ handle_cast({gui_update, update_balance, NewBalance}, ServerState = #{socket := 
     io:format("[socket_server] sent: ~s~n", [Msg]),
     {noreply, ServerState};
 
+handle_cast({gui_update, customer_cancelled, CustomerId}, ServerState = #{socket := Socket}) ->
+    Msg = lists:flatten(io_lib:format("gui:customer_cancelled:~p", [CustomerId])),
+    gen_tcp:send(Socket, list_to_binary(Msg)),
+    io:format("[socket_server] sent customer cancellation: ~s~n", [Msg]),
+    {noreply, ServerState};
+
 
 handle_cast(_Request, State) -> 
     {noreply, State}.

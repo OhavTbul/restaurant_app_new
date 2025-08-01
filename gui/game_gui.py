@@ -305,6 +305,15 @@ class GameGUI:
             customer.rect = pygame.Rect(queue_pos[0] * GRID_SIZE, queue_pos[1] * GRID_SIZE, GRID_SIZE, GRID_SIZE)
             customer.draw(self.screen)
             i += 1
+        
+        # Display queue counter
+        queue_count = len(self.waiting_customers)
+        if queue_count > 0:
+            font = pygame.font.Font(None, 24)
+            counter_text = f"Queue: {queue_count}"
+            text_surf = font.render(counter_text, True, YELLOW)
+            counter_pos = (QUEUE_START_POS[0] * GRID_SIZE, (QUEUE_START_POS[1] - 1) * GRID_SIZE)
+            self.screen.blit(text_surf, counter_pos)
 
 
     def draw_grid(self):
@@ -354,10 +363,7 @@ class GameGUI:
             balance_text = font.render(f"Balance: {self.balance}$", True, WHITE)
             self.screen.blit(balance_text, (10, 10))
 
-        if self.status_message and self.status_message_timer > pygame.time.get_ticks():
-            text_surf = self.font.render(self.status_message, True, WHITE)
-            text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, 50))
-            self.screen.blit(text_surf, text_rect)
+
 
 
         if self.confirm_add_button:
@@ -374,6 +380,19 @@ class GameGUI:
                 self.screen.blit(msg_surface, (SCREEN_WIDTH - 380, 330))
             else:
                 self.add_popup_message = None  # מחיקת ההודעה אחרי 5 שניות
+
+        # Display cancellation messages prominently
+        if self.status_message and self.status_message_timer > pygame.time.get_ticks():
+            # Create a background rectangle for the status message
+            text_surf = self.font.render(self.status_message, True, WHITE)
+            text_rect = text_surf.get_rect(center=(SCREEN_WIDTH // 2, 50))
+            
+            # Add background rectangle for better visibility
+            bg_rect = text_rect.inflate(20, 10)
+            pygame.draw.rect(self.screen, RED, bg_rect, border_radius=5)
+            pygame.draw.rect(self.screen, WHITE, bg_rect, 2, border_radius=5)
+            
+            self.screen.blit(text_surf, text_rect)
 
 
         
@@ -699,6 +718,18 @@ class GameGUI:
                     if self.selected_entity:
                         self.selected_entity.level += 1
                     print("[GUI] Upgrade approved.")
+
+                elif command == "customer_cancelled":
+                    customer_id = parts[2]
+                    # Remove customer from waiting queue and customers list
+                    if customer_id in self.waiting_customers:
+                        del self.waiting_customers[customer_id]
+                        print(f"[GUI] Customer {customer_id} removed from waiting queue")
+                    if customer_id in self.customers:
+                        del self.customers[customer_id]
+                        print(f"[GUI] Customer {customer_id} removed from customers list")
+                    # Display status message
+                    self.display_status_message(f"Customer {customer_id} cancelled and left")
 
                 # --- אפשר להוסיף כאן הודעות אחרות לפי צורך ---
                 else:
