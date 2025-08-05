@@ -51,6 +51,16 @@ handle_cast(send_report, State) ->
     io:format("[machine_mng] Sending ~p machine states to SAFE NODE~n", [length(AllMachinesData)]),
     {noreply, State};
 
+handle_cast({take_over_responsibilities, EntityTypes}, State) ->
+    lists:foreach(
+      fun(AnEntityType) ->
+          % --> כאן נמצא ה-spawn! <--
+          spawn(fun() -> restorer:restore_node(AnEntityType) end)
+      end,
+      EntityTypes
+    ),
+    {noreply, State};
+
 handle_cast(_, State) ->
     {noreply, State}.
 

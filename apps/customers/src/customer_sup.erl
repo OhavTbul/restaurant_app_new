@@ -147,4 +147,3 @@ start_restored_fsm(StateList) ->
                 io:format("[customer_sup] Failed to restore customer ~p: ~p~n", [CustomerId, Reason])
         end
     end, StateList).
-

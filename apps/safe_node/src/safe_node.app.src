@@ -5,7 +5,13 @@
   {registered, []},
   {mod, {safe_node_sup, []}},
   {applications, [kernel, stdlib]},
-  {env, []},
+    {env, [ % <--- שינוי כאן
+    {nodes_to_manage, [
+        'tables_node@127.0.0.1',
+        'customers_node@127.0.0.1',
+        'machines_node@127.0.0.1',
+        'waiters_node@127.0.0.1'
+    ]}]},
   {modules, [safe_node_sup, task_registry, order_registry, state_controller,cashier,player,socket_server]},
   {licenses, ["Apache-2.0"]},
   {links, []}
