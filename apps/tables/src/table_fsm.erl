@@ -44,53 +44,57 @@ clean_by_player(TableId) -> gen_statem:cast({global, {?MODULE, TableId}},clean_n
 
 
 init({TableId, Pos}) ->
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick), % Start heartbeat
     case ets:lookup(?TABLE, TableId) of
-        %% שחזור מצב
+        %% --- כאן נמצא התיקון המלא ---
         [{TableId, SavedState}] ->
-            io:format("[table_fsm] Restoring table ~p from ETS with state: ~p~n", [TableId, maps:get(state_name, SavedState, "unknown")]),
-            CurrentState = SavedState#{table_id => TableId, pid => self(), table_pos => Pos, state_name => maps:get(state_name, SavedState, idle)}, 
-            StateName = maps:get(state_name, SavedState, idle), 
+            
+            StateName = maps:get(state_name, SavedState, idle),
+            io:format("[table_fsm] Restoring table ~p from ETS in state ~p ~n", [TableId, StateName]),
+            CurrentState = SavedState#{table_id => TableId, pid => self(), table_pos => Pos, state_name => StateName},
 
-            %% הפעלה מחדש של הטיימר המתאים למצב
-            case StateName of
-                dirty ->
-                    player:dirty_table_notification(TableId),
-                    {ok, dirty, CurrentState};
-                taken ->
-                    % כאן אין טיימר, אז זה תקין
-                    {ok, taken, CurrentState};
-                idle ->
-                    % כאן אין טיימר, אז זה תקין
-                    table_registry:notify_table_cleaned(TableId),
-                    {ok, idle, CurrentState}
-            end;
+            % 1. שלח את כל ההודעות הנדרשות כדי לסנכרן את המערכת
+            notify_system_on_restore(CurrentState),
 
-        %% התחלה חדשה
+            % 2. הלוגיקה הפנימית של המצב נשארת זהה
+            {ok, StateName, CurrentState};
+        %% --- סוף התיקון ---
+
+        %% התחלה חדשה (ללא שינוי)
         [] ->
             io:format("[table_fsm] Table ~p starting for the first time~n", [TableId]),
-            InitialState = #{ % <--- וודא שההזחה נכונה
-                table_id => TableId,
-                pid => self(),
-                customer_id => undefined,
-                state_name => idle,
-                table_pos => Pos
-            },
+            InitialState = #{table_id => TableId, pid => self(), customer_id => undefined, state_name => idle, table_pos => Pos},
             send_heartbeat(InitialState),
-            % זהו השינוי הקריטי: קריאה סינכרונית ל-table_registry
-            % וודא שכל השורות הבאות מועתקות בדיוק, כולל הפסיקים והנקודה-פסיק
-            _ = case table_registry:notify_table_cleaned(TableId) of
-                ok ->
-                    io:format("[table_fsm] Successfully notified table_registry about new table ~p (sync).~n", [TableId]);
-                {error, Reason} ->
-                    io:format("[table_fsm] ERROR: Failed to notify table_registry about new table ~p: ~p~n", [TableId, Reason])
-            end,
-            io:format("[table_fsm] Notified table_registry that table ~p is available.~n", [TableId]), % <--- וודא שיש פסיק בסוף השורה
+            _ = table_registry:notify_table_cleaned(TableId),
             {GuiPos, _, _} = Pos,
             gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, table, TableId, GuiPos, idle}}),
             {ok, idle, InitialState}
-    end. % <--- וודא שיש רק end. אחד כאן
+    end.
 
+
+%% @private
+%% שולח את כל ההודעות הנדרשות בעת שחזור FSM של שולחן
+notify_system_on_restore(State) ->
+    TableId = maps:get(table_id, State),
+    StateName = maps:get(state_name, State),
+    {GuiPos, _, _} = maps:get(table_pos, State),
+
+    % 1. עדכן את ה-GUI לגבי המצב הנוכחי
+    io:format("[table_fsm] Notifying GUI about restored table ~p in state ~p~n", [TableId, StateName]),
+    gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, table, TableId, GuiPos, StateName}}),
+
+    % 2. בצע פעולות לוגיות נוספות בהתאם למצב המשוחזר
+    case StateName of
+        idle ->
+            % אם השולחן היה פנוי, הודע למנהל השולחנות שהוא זמין
+            table_registry:notify_table_cleaned(TableId);
+        dirty ->
+            % אם השולחן היה מלוכלך, הודע לשחקן שצריך לנקות אותו
+            player:dirty_table_notification(TableId);
+        taken ->
+            % אם השולחן היה תפוס, הלקוח שישב בו ידאג לשחרר אותו
+            % כשהוא יתאושש, ולכן אין צורך בפעולה נוספת כאן.
+            ok
+    end.
 
 callback_mode() -> %fsm mood
     state_functions.
@@ -108,7 +112,6 @@ code_change(_OldVsn, State, Data, _Extra) -> %otp function
 %% IDLE
 idle(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 idle(cast, {seat_customer, CustomerId}, State) -> %customer get to the table to seat
@@ -119,6 +122,7 @@ idle(cast, {seat_customer, CustomerId}, State) -> %customer get to the table to 
     table_sup:update_table_state(TableId, NewState), 
     {GuiPos, _, _} = maps:get(table_pos, NewState),
     gen_server:cast({global, socket_server},{gui_update, update_state, table, TableId, taken,GuiPos}),
+    send_heartbeat(NewState),
     {next_state, taken, NewState};
 
 
@@ -130,7 +134,6 @@ idle(_, _, State) ->
 %% TAKEN
 taken(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 taken(cast, {free_table, CustomerId}, State) -> %customer got up
@@ -143,6 +146,7 @@ taken(cast, {free_table, CustomerId}, State) -> %customer got up
             table_sup:update_table_state(TableId, NewState),
             {GuiPos, _, _} = maps:get(table_pos, NewState),
             gen_server:cast({global, socket_server},{gui_update, update_state, table, TableId, dirty,GuiPos}),
+            send_heartbeat(NewState),
             {next_state, dirty, NewState};
         _ ->
             io:format("[table_fsm] Unauthorized leave attempt by ~p at table ~p~n", [CustomerId, TableId]),
@@ -157,6 +161,7 @@ taken(cast, {free_table_timeout, CustomerId}, State) -> %customer got up
     table_registry:notify_table_cleaned(TableId),
     {GuiPos, _, _} = maps:get(table_pos, NewState),
     gen_server:cast({global, socket_server},{gui_update, update_state, table, TableId, idle,GuiPos}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 %for unexpected msgs
@@ -168,7 +173,6 @@ taken(_, _, State) ->
 
 dirty(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 %not used - simulation
@@ -182,6 +186,7 @@ dirty(info, clean_table_timeout, State) -> %the table is clean
     table_sup:update_table_state(TableId, NewState),
     {GuiPos, _, _} = maps:get(table_pos, NewState),
     gen_server:cast({global, socket_server},{gui_update, update_state, table, TableId, idle,GuiPos}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 dirty(cast, clean_now, State) ->
@@ -192,6 +197,7 @@ dirty(cast, clean_now, State) ->
     table_sup:update_table_state(TableId, NewState),
     {GuiPos, _, _} = maps:get(table_pos, NewState),
     gen_server:cast({global, socket_server},{gui_update, update_state, table, TableId, idle,GuiPos}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 
@@ -206,7 +212,6 @@ send_heartbeat(State) ->
 % --- Add handle_info/2 callback ---
 handle_info(heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 handle_info(_Msg, State) ->
     {keep_state, State}.

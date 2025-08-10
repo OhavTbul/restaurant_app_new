@@ -1,5 +1,5 @@
 -module(restorer).
--export([restore_node/1]).
+-export([restore_node/1, stop_application/1]).
 
 %% @doc
 %% This is the main entry point for restoring.
@@ -27,4 +27,16 @@ restore_node(EntityType) ->
 
         {error, Reason} ->
             io:format("[Restorer] FAILED to start application '~p'. Reason: ~p~n", [AppName, Reason])
+    end.
+
+stop_application(EntityType) ->
+    AppName = EntityType, % In our case, the names are the same
+    io:format("[Restorer on ~p] Received command to STOP application '~p'...~n", [node(), AppName]),
+    case application:stop(AppName) of
+        ok ->
+            io:format("[Restorer] Successfully stopped application '~p'.~n", [AppName]);
+        {error, {not_started, AppName}} ->
+            io:format("[Restorer] Application '~p' was not running. Nothing to stop.~n", [AppName]);
+        {error, Reason} ->
+            io:format("[Restorer] FAILED to stop application '~p'. Reason: ~p~n", [AppName, Reason])
     end.

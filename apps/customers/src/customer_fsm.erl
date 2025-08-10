@@ -57,7 +57,7 @@ init(ClientId) ->
             io:format("[customer_fsm] Restoring customer ~p from ETS~n", [ClientId]),
             UpdatedState = SavedState#{client_id => ClientId, pid => self(), state_name => maps:get(state_name, SavedState, idle)},
             StateName = maps:get(state_name, SavedState, idle),
-            erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+            notify_system_on_restore(UpdatedState),
 
             case StateName of
                 idle ->
@@ -78,9 +78,46 @@ init(ClientId) ->
             send_heartbeat(State),
 
             io:format("[DEBUG] Sending request_table to table_registry for customer ~p~n", [ClientId]),
-            erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
             gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, customer, ClientId, ?START_POS, idle}}),
             {ok, idle, State, {state_timeout, ?TABLE_TIMEOUT, timeout_table}}
+    end.
+
+
+%% Sends all necessary notifications when an FSM is restored.
+notify_system_on_restore(State) ->
+    ClientId = maps:get(client_id, State),
+    StateName = maps:get(state_name, State),
+    Pos = maps:get(pos, State, ?START_POS),
+
+    io:format("[customer_fsm] Notifying GUI about restored customer ~p in state ~p~n", [ClientId, StateName]),
+    gen_server:cast({global, socket_server}, {gui_update, update_state, customer, ClientId, StateName, Pos}),
+
+    case StateName of
+        idle ->
+            gen_server:cast({global, table_registry}, {request_table, ClientId});
+        seated ->
+            TableId = maps:get(table, State),
+            GuiPosW = maps:get(waiter_pos, State),
+            Task = #{type => take_order, table_id => TableId, client_id => ClientId, table_pos => GuiPosW},
+            gen_server:cast({global, task_registry}, {add_task, Task});
+        paying ->
+            case maps:find(table, State) of
+                {ok, TableId} ->
+                    io:format("[customer_fsm] Restored in 'paying'. Re-sending free_table to ~p.~n", [TableId]),
+                    gen_statem:cast({global, {table_fsm, TableId}}, {free_table, ClientId});
+                error -> ok
+            end;
+        leaving ->
+            case maps:find(table, State) of
+                {ok, TableId} ->
+                    io:format("[customer_fsm] Restored in 'leaving'. Re-sending free_table to ~p.~n", [TableId]),
+                    % הערה: כאן אפשר להחליט אם לשלוח free_table או free_table_timeout
+                    % תלוי בלוגיקה העסקית. free_table הוא בטוח יותר.
+                    gen_statem:cast({global, {table_fsm, TableId}}, {free_table, ClientId});
+                error -> ok
+            end;
+        _ ->
+            ok
     end.
 
 
@@ -107,7 +144,6 @@ send_heartbeat(State) ->
 %%%--- IDLE
 idle(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 idle(cast, {assign_table, TableId, TablePos}, State) -> % customer got table
@@ -115,11 +151,11 @@ idle(cast, {assign_table, TableId, TablePos}, State) -> % customer got table
     io:format("Customer ~p assigned to table ~p~n", [ClientId, TableId]),
     {GuiPosT, GuiPosC, GuiPosW} = TablePos,
     NewState = State#{table => TableId, pos => GuiPosC, table_pos=> GuiPosT, waiter_pos => GuiPosW,state_name => seated},
-    send_heartbeat(NewState),
     Task = #{type => take_order, table_id => TableId, client_id => ClientId, table_pos => GuiPosW},
     gen_server:cast({global, task_registry}, {add_task, Task}),
     io:format("Customer ~p sent take_order task.~n", [ClientId]),
     gen_server:cast({global, socket_server}, {gui_update, update_state, customer, ClientId, seated, maps:get(pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, seated, NewState, {state_timeout, ?ORDER_TIMEOUT, timeout_order}};
 
 idle(state_timeout, timeout_table, State) -> %table timeout
@@ -138,7 +174,6 @@ idle(_Type, _Event, State) ->
 
 seated(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 seated(cast, {take_order, WaiterId}, State) ->
@@ -180,13 +215,12 @@ seated(_Type, _Event, State) ->
 %%%--- WAITING_FOOD
 waiting_food(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 waiting_food(cast, food_arrived, State) -> %customer got food
     io:format("Customer ~p received food. Eating now~n", [maps:get(client_id, State)]),
-    send_heartbeat(State),
     NewState = State#{state_name => eating},
+    send_heartbeat(NewState),
     {next_state, eating, NewState, {state_timeout, ?EAT_TIMEOUT, done_eating}};
 
 
@@ -199,7 +233,6 @@ waiting_food(_Type, _Event, State) ->
 %%%--- EATING
 eating(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 eating(state_timeout, done_eating, State) ->
@@ -222,7 +255,6 @@ eating(_Type, _Event, State) ->
 
 paying(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 paying(cast, paid, State) ->
@@ -259,7 +291,6 @@ leaving(_Type, _Event, State) ->
 
 handle_info(heartbeat_tick, State) ->
     send_heartbeat(State), % שליחה נכונה
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {noreply, State};
 
 handle_info(Msg, State) -> % טיפול בהודעות info אחרות אם יהיו

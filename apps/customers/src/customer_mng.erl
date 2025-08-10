@@ -85,6 +85,12 @@ handle_cast({take_over_responsibilities, EntityTypes}, State) ->
     ),
     {noreply, State};
 
+handle_cast({relinquish_responsibility, EntityType}, State) ->
+    io:format("[~p] Received order to relinquish responsibility for '~p'. Stopping application...~n", [?MODULE, EntityType]),
+    % קורא למשחזר כדי שיכבה את האפליקציה המתאימה
+    restorer:stop_application(EntityType),
+    {noreply, State};
+
 handle_cast(_, State) ->
     {noreply, State}. % Removed trailing backslash
 

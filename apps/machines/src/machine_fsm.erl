@@ -31,12 +31,13 @@ upgrade(MachineId) -> %sending msg to upgrade
 %%%=======================
 
 init({MachineId, Pos}) ->
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     case ets:lookup(machine_state, MachineId) of
         [{_, SavedState}] ->
-            io:format("Restoring machine ~p from ETS~n", [MachineId]),
-            State = SavedState#{machine_id => MachineId, pid => self(), machine_pos => Pos, state_name => maps:get(state_name, SavedState, idle)},
             StateName = maps:get(state_name, SavedState, idle),
+            io:format("==> [DEBUG] Restoring machine ~p. Saved state_name is: ~p~n", [MachineId, StateName]),
+
+            State = SavedState#{machine_id => MachineId, pid => self(), machine_pos => Pos, state_name => StateName},
+            notify_system_on_restore(State),
             case StateName of
                 cooking ->
                     Order = maps:get(current_order, State),
@@ -68,6 +69,26 @@ init({MachineId, Pos}) ->
     end.
 
 
+%% Sends all necessary notifications when a machine FSM is restored.
+notify_system_on_restore(State) ->
+    MachineId = maps:get(machine_id, State),
+    StateName = maps:get(state_name, State),
+    Pos = maps:get(machine_pos, State),
+
+    GuiStatus = case StateName of
+        cooking -> busy;
+        _ -> idle
+    end,
+
+    io:format("[machine_fsm] Notifying GUI about restored machine ~p in state ~p~n", [MachineId, GuiStatus]),
+    gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, machine, MachineId, Pos, GuiStatus}}),
+    case StateName of
+        idle ->
+            gen_server:cast({global, order_registry}, {machine_ready, MachineId});
+        _ ->
+            ok
+    end.
+
 callback_mode() -> %fsm mood
     state_functions.
 
@@ -91,16 +112,21 @@ machine_time(_) -> 3000.  % 3sec
 %%%=======================
 idle(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 idle(cast, {machine_order, Order}, State) ->
     Upgrade = maps:get(upgrade_level, State, 0),
     Delay = machine_time(Upgrade),
     timer:send_after(Delay, {cooking_done, Order}), %send when done cooking
-    NewState = State#{current_order := Order, order_pos => maps:get(table_pos, Order)},
+        NewState = State#{
+        current_order => Order, 
+        order_pos => maps:get(table_pos, Order),
+        state_name => cooking
+
+    },
     machine_sup:update_machine_state(maps:get(machine_id, NewState), NewState),
     gen_server:cast({global, socket_server},{gui_update, update_state, machine, maps:get(machine_id, NewState), busy,maps:get(machine_pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, cooking, NewState};
 
 idle(cast, upgrade, State) ->
@@ -120,7 +146,6 @@ idle(EventType, EventContent, State) ->
 %%%=======================
 cooking(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 cooking(info, {cooking_done, Order}, State) ->
@@ -145,6 +170,7 @@ cooking(info, {cooking_done, Order}, State) ->
     end,
     gen_server:cast({global, order_registry}, {machine_ready, maps:get(machine_id, State)}),
     gen_server:cast({global, socket_server},{gui_update, update_state, machine, maps:get(machine_id, NewState), idle,maps:get(machine_pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 cooking(cast, upgrade, State) ->
@@ -173,7 +199,7 @@ handle_event(EventType, EventContent, State) ->
 % --- Add handle_info/2 callback ---
 handle_info(heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+
     {keep_state, State};
 handle_info(Msg, State) ->
     io:format("[machine_fsm] Unexpected info: ~p~n", [Msg]),

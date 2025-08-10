@@ -12,7 +12,7 @@
         'machines_node@127.0.0.1',
         'waiters_node@127.0.0.1'
     ]}]},
-  {modules, [safe_node_sup, task_registry, order_registry, state_controller,cashier,player,socket_server]},
+  {modules, [safe_node_sup, task_registry, order_registry, state_controller,cashier,player,socket_server,general_start]},
   {licenses, ["Apache-2.0"]},
   {links, []}
  ]}.

@@ -79,7 +79,7 @@ init(WaiterId) ->
             StateName = maps:get(state_name, SavedState, idle),
             SpeedLevel = maps:get(speed_level, SavedState, 0),
 
-            erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
+            notify_system_on_restore(State),
 
             % Restore logic based on the actual state name
             case StateName of
@@ -88,18 +88,18 @@ init(WaiterId) ->
                     {ok, taking_order, State, {state_timeout, WalkTime, get_to_table_timeout}};
 
                 send_order ->
-                    {ok, send_order, State, {state_timeout, 20000, customer_reply_timeout}};
+                    {ok, send_order, State, {state_timeout, 5000, customer_reply_timeout}};
 
                 pick_up_meal ->
-                    TotalTime = get_adjusted_time(walk, SpeedLevel) + get_adjusted_time(serve, SpeedLevel),
-                    {ok, serving, State, {state_timeout, TotalTime, total_time}};
+                    WalkTime = get_adjusted_time(walk, SpeedLevel),
+                    {ok, pick_up_meal, State, {state_timeout, WalkTime, wait_to_serve}};
 
                 serving ->
-                    TotalTime = get_adjusted_time(walk, SpeedLevel) + get_adjusted_time(serve, SpeedLevel),
-                    {ok, serving, State, {state_timeout, TotalTime, total_time}};
+                    % אם כבר היינו בתהליך ההגשה, נפעיל את הטיימר המלא של ההגשה
+                    ServeTime = get_adjusted_time(serve, SpeedLevel),
+                    {ok, serving, State, {state_timeout, ServeTime, total_time}};
 
                 idle ->
-                    gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
                     {ok, idle, State}
             end;
 
@@ -119,10 +119,32 @@ init(WaiterId) ->
                 serve_table_pos => ?IDLE_POS
             },
             send_heartbeat(State),
-            erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
             gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
             gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, waiter, WaiterId, ?IDLE_POS, idle}}),
             {ok, idle, State}
+    end.
+
+%% @private
+%% Sends notifications when a waiter is restored
+notify_system_on_restore(State) ->
+    WaiterId = maps:get(waiter_id, State),
+    StateName = maps:get(state_name, State),
+    Pos = maps:get(pos, State, ?IDLE_POS),
+    
+    GuiStatus = case StateName of
+        idle -> idle;
+        _ -> busy
+    end,
+
+    % עדכון ה-GUI
+    gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, waiter, WaiterId, Pos, GuiStatus}}),
+    
+    % הודעה למנהל המשימות אם המלצר פנוי
+    case StateName of
+        idle ->
+            gen_server:cast({global, task_registry}, {waiter_ready, WaiterId});
+        _ ->
+            ok
     end.
 
 callback_mode() -> state_functions.
@@ -138,7 +160,6 @@ code_change(_OldVsn, StateName, Data, _Extra) ->
 
 handle_info(heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 handle_info(Msg, State) -> % Catch-all for other info messages
@@ -184,7 +205,6 @@ send_heartbeat(State) ->
 %%%--- IDLE
 idle(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 idle(cast, {task, TaskMap}, State) when is_map(TaskMap) ->
@@ -201,6 +221,7 @@ idle(cast, {task, TaskMap}, State) when is_map(TaskMap) ->
             %todo : send to gui the new pos
             NewState = State#{current_table_id := TableId, current_client_id := ClientId, pos => Tpos, current_task := {take_order, TableId},state_name => taking_order},
             gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
+            send_heartbeat(NewState),
             {next_state, taking_order, NewState, {state_timeout, WalkTime, get_to_table_timeout}};
 
         serve_meal ->
@@ -210,6 +231,7 @@ idle(cast, {task, TaskMap}, State) when is_map(TaskMap) ->
             %todo : send to gui the new pos
             NewState = State#{current_table_id := TableId, pos => ?KITCHEN_POS, serve_table_pos =>Tpos, current_client_id := ClientId, current_meal := Meal, current_task := {serve_meal, TableId, Meal},state_name => pick_up_meal},
             gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
+            send_heartbeat(NewState),
             {next_state, pick_up_meal, NewState, {state_timeout, WalkTime, walk_time}};
             
         _Other ->
@@ -234,7 +256,6 @@ idle(_Type, _Event, State) ->
 %%%--- TAKING_ORDER
 taking_order(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 taking_order(state_timeout, get_to_table_timeout, State) ->
@@ -244,6 +265,7 @@ taking_order(state_timeout, get_to_table_timeout, State) ->
     io:format("[waiter_fsm] Waiter ~p start taking order from table ~p.~n", [WaiterId, TableId]),
     gen_server:cast({global, {customer_fsm,ClientId}}, {take_order,WaiterId}),
     NewState = State#{state_name => send_order},
+    send_heartbeat(NewState),
     {next_state, send_order, NewState, {state_timeout, 5000, customer_reply_timeout}};
 
 taking_order(cast, upgrade, State) ->
@@ -261,7 +283,6 @@ taking_order(_Type, _Event, State) ->
 %%--send order
 send_order(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 send_order(cast, {client_order, Order}, State) ->
@@ -271,6 +292,7 @@ send_order(cast, {client_order, Order}, State) ->
     NewState = State#{current_task => undefined, current_meal => undefined, pos => ?IDLE_POS, current_table_id => undefined, current_client_id => undefined,state_name => idle},
     gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
     gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 
@@ -282,6 +304,7 @@ send_order(state_timeout, customer_reply_timeout, State) ->
     gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
     NewState = State#{current_task := undefined, pos => ?IDLE_POS, current_meal := undefined, current_table_id := undefined, current_client_id := undefined,state_name => idle},
     gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 send_order(cast, upgrade, State) ->
@@ -298,7 +321,6 @@ send_order(_Type, _Event, State) ->
 %%%--- PICK_UP_MEAL
 pick_up_meal(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 pick_up_meal(state_timeout, walk_time, State) ->
@@ -318,6 +340,7 @@ pick_up_meal(state_timeout, wait_to_serve, State) ->
     TotalTime = WalkTime + ServeTime,
     NewState = State#{state_name => serving, pos => maps:get(serve_table_pos, State)},
     gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, busy,maps:get(pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, serving, NewState, {state_timeout, TotalTime, total_time}};
 
 pick_up_meal(_Type, _Event, State) ->
@@ -325,7 +348,6 @@ pick_up_meal(_Type, _Event, State) ->
 %%%--- SERVING
 serving(info, heartbeat_tick, State) ->
     send_heartbeat(State),
-    erlang:send_after(?HEARTBEAT_INTERVAL, self(), heartbeat_tick),
     {keep_state, State};
 
 serving(state_timeout, total_time, State) ->
@@ -338,6 +360,7 @@ serving(state_timeout, total_time, State) ->
     NewState = State#{current_task := undefined, pos => ?IDLE_POS, current_meal := undefined, current_table_id := undefined, current_client_id := undefined,state_name => idle},
     gen_server:cast({global, task_registry}, {waiter_ready, WaiterId}),
     gen_server:cast({global, socket_server},{gui_update, update_state, waiter, WaiterId, idle,maps:get(pos, NewState)}),
+    send_heartbeat(NewState),
     {next_state, idle, NewState};
 
 serving(cast, upgrade, State) ->

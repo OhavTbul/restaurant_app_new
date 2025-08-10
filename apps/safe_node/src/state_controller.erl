@@ -25,7 +25,7 @@ start_link(Nodes) ->
 init(Nodes) ->
     net_kernel:monitor_nodes(true),
     rand:seed(exsplus),
-    % יצירת טבלאות ETS נפרדות לכל סוג ישות
+    % ETS for each entity
     ets:new(?WAITERS_TABLE, [named_table, public, set]),
     ets:new(?CUSTOMERS_TABLE, [named_table, public, set]),
     ets:new(?MACHINES_TABLE, [named_table, public, set]),
@@ -43,7 +43,7 @@ init(Nodes) ->
     io:format("[state_controller] Initial responsibilities mapped: ~p~n", [Responsibilities]),
     {ok, #state{workload_map = WorkloadMap, responsibilities = Responsibilities}}.
 
-% כאן נטפל בהודעות העדכון
+
 handle_cast({update, EntityType, DataList}, State) ->
     SafeTable = case EntityType of
         waiters -> ?WAITERS_TABLE;
@@ -51,7 +51,7 @@ handle_cast({update, EntityType, DataList}, State) ->
         machines -> ?MACHINES_TABLE;
         tables -> ?TABLES_TABLE
     end,
-    % מחיקת המידע הישן והכנסת המידע החדש
+
     ets:delete_all_objects(SafeTable),
     ets:insert(SafeTable, DataList),
     io:format("[state_controller] Updated state for ~p with ~p records.~n", [EntityType, length(DataList)]),
@@ -60,7 +60,6 @@ handle_cast({update, EntityType, DataList}, State) ->
 handle_cast(_Msg, State) ->
     {noreply, State}.
 
-% כאן נטפל בבקשות שחזור
 handle_call({get_full_state, EntityType}, _From, State) ->
     SafeTable = case EntityType of
         waiters -> ?WAITERS_TABLE;
@@ -75,7 +74,7 @@ handle_call(_Msg, _From, State) ->
     {reply, ignored, State}.
 
 
-%% NEW: The core logic for handling a node failure with delegation.
+
 handle_info({nodedown, FailedNode}, State = #state{workload_map = Workloads, responsibilities = Resp}) ->
     io:format("!!! NODE DOWN DETECTED: ~p !!!~n", [FailedNode]),
 
@@ -91,10 +90,10 @@ handle_info({nodedown, FailedNode}, State = #state{workload_map = Workloads, res
 
             case Candidates of
                 [_H | _T] -> % If there are other nodes alive
-                    % 3. Choose a random "heir" from the candidates
+                    % Choose a random "heir" from the candidates
                     HeirNode = lists:nth(rand:uniform(length(Candidates)), Candidates),
                     io:format("Choosing heir node ~p to take over.~n", [HeirNode]),
-                    % השורה החדשה והנכונה:
+
                     {value, HeirEntityType} = lists:search(fun({_Type, Node}) -> Node == HeirNode end, maps:to_list(Workloads)),
                     {HeirOriginalEntityType, _} = HeirEntityType,                    
                     HeirManagerName = case HeirOriginalEntityType of
@@ -108,7 +107,7 @@ handle_info({nodedown, FailedNode}, State = #state{workload_map = Workloads, res
                     io:format("Casting message ~p to manager ~p~n", [Message, DestinationProcess]),
                     gen_server:cast(DestinationProcess, Message),
 
-                    % 5. Update responsibility
+                    % Update state
                     NewResp = maps:remove(FailedNode, Resp),
                     HeirOldResp = maps:get(HeirNode, NewResp, []), % Get heir's old tasks, or [] if none
                     HeirNewResp = HeirOldResp ++ OrphanedEntityTypes,
@@ -116,21 +115,19 @@ handle_info({nodedown, FailedNode}, State = #state{workload_map = Workloads, res
                     io:format("New responsibilities: ~p~n", [FinalResp]),
                     {noreply, State#state{responsibilities = FinalResp}};
 
-                [] -> % אין מועמדים, ה-state_controller לוקח אחריות
+                [] -> %safe node take the responsibility
                     io:format("CRITICAL: No other candidate nodes. This node (~p) is taking over responsibility.~n", [node()]),
 
-                    % --- כאן אנחנו משלבים את הלוגיקה הישנה שלך ---
-                    % אנחנו מפעילים לולאה על כל אחריות ברשימה שהוצאנו
                     lists:foreach(
                       fun(EntityType) ->
-                          % זה הלב של הקוד הישן שלך, עכשיו הוא רץ לכל אחריות
+
                           io:format("Spawning restorer for ~p...~n", [EntityType]),
                           spawn(fun() -> restorer:restore_node(EntityType) end)
                       end,
-                      OrphanedEntityTypes % הרשימה שאנחנו עוברים עליה
+                      OrphanedEntityTypes 
                     ),
 
-                    % עדכון מפת האחריות, בדיוק כמו שעשינו קודם
+                    % update state
                     NewResp = maps:remove(FailedNode, Resp),
                     MyOldResp = maps:get(node(), NewResp, []),
                     MyNewResp = MyOldResp ++ OrphanedEntityTypes,
@@ -145,9 +142,66 @@ handle_info({nodedown, FailedNode}, State = #state{workload_map = Workloads, res
     end;
 
 
-handle_info({nodeup, Node}, State) ->
-    io:format("--- NODE UP DETECTED: ~p ---~n", [Node]),
-    % כאן נוסיף לוגיקה אם נרצה לטפל בחזרה של node
-    {noreply, State};
+
+
+
+
+handle_info({nodeup, ResurrectedNode}, State = #state{workload_map = Workloads, responsibilities = Resp}) ->
+    io:format("--- NODE UP DETECTED: ~p ---~n", [ResurrectedNode]),
+
+    % find the og entity
+    case lists:search(fun({_Type, Node}) -> Node == ResurrectedNode end, maps:to_list(Workloads)) of
+        {value, {OriginalEntityType, _}} ->
+            io:format("Node ~p is originally responsible for '~p'. Initiating failback.~n", [ResurrectedNode, OriginalEntityType]),
+
+            % fine how have the og entity
+            {value, {CurrentOwnerNode, _}} = find_current_owner(OriginalEntityType, Resp),
+            
+            if
+                CurrentOwnerNode == ResurrectedNode -> %the relevent node alredy have the og entity
+                    io:format("Node ~p already holds its original responsibility. No action needed.~n", [ResurrectedNode]),
+                    {noreply, State};
+                true ->
+                    io:format("Responsibility is currently held by ~p. Ordering handoff.~n", [CurrentOwnerNode]),
+
+                    if
+                        CurrentOwnerNode == node() ->
+                            io:format("[state_controller] I am the owner. Stopping application '~p' locally.~n", [OriginalEntityType]),
+                            restorer:stop_application(OriginalEntityType);
+                        true ->
+                            {value, {OwnerEntityType, _}} = lists:search(fun({_Type, Node}) -> Node == CurrentOwnerNode end, maps:to_list(Workloads)),
+                            OwnerManagerName = entity_to_manager_name(OwnerEntityType),
+                            gen_server:cast({global, OwnerManagerName}, {relinquish_responsibility, OriginalEntityType})
+                    end,
+
+                    OwnerOldResp = maps:get(CurrentOwnerNode, Resp),
+                    OwnerNewResp = lists:delete(OriginalEntityType, OwnerOldResp),
+                    TempResp = maps:put(CurrentOwnerNode, OwnerNewResp, Resp),
+                    FinalResp = maps:put(ResurrectedNode, [OriginalEntityType], TempResp),
+                    
+                    io:format("New responsibilities: ~p~n", [FinalResp]),
+                    {noreply, State#state{responsibilities = FinalResp}}
+            end;
+        false ->
+            io:format("Node ~p came up, but it's not in my original workload map. Ignoring.~n", [ResurrectedNode]),
+            {noreply, State}
+    end;
+
 handle_info(_Msg, State) ->
     {noreply, State}.
+
+find_current_owner(EntityType, ResponsibilitiesMap) ->
+    lists:search(
+      fun({_Node, RespList}) ->
+          lists:member(EntityType, RespList)
+      end,
+      maps:to_list(ResponsibilitiesMap)
+    ).
+
+entity_to_manager_name(EntityType) ->
+    case EntityType of
+        customers -> customer_mng;
+        waiters -> waiter_mng;
+        machines -> machine_mng;
+        tables -> table_mng
+    end.
