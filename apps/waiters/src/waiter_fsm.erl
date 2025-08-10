@@ -124,28 +124,29 @@ init(WaiterId) ->
             {ok, idle, State}
     end.
 
-%% @private
-%% Sends notifications when a waiter is restored
+
 notify_system_on_restore(State) ->
-    WaiterId = maps:get(waiter_id, State),
+    WaiterId  = maps:get(waiter_id, State),
     StateName = maps:get(state_name, State),
-    Pos = maps:get(pos, State, ?IDLE_POS),
-    
+    Pos       = maps:get(pos, State, ?IDLE_POS),
+
     GuiStatus = case StateName of
         idle -> idle;
-        _ -> busy
+        _    -> busy
     end,
 
-    % עדכון ה-GUI
-    gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, waiter, WaiterId, Pos, GuiStatus}}),
-    
-    % הודעה למנהל המשימות אם המלצר פנוי
+    %% עדכון ה-GUI בפורמט UPDATE (עם Pos כדי לאפשר upsert אם חסר)
+    gen_server:cast({global, socket_server},
+                    {gui_update, update_state, waiter, WaiterId, GuiStatus, Pos}),
+
+    %% הודעה למנהל המשימות אם המלצר פנוי
     case StateName of
         idle ->
             gen_server:cast({global, task_registry}, {waiter_ready, WaiterId});
         _ ->
             ok
     end.
+
 
 callback_mode() -> state_functions.
 

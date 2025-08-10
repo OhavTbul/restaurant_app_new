@@ -71,30 +71,23 @@ init({TableId, Pos}) ->
     end.
 
 
-%% @private
-%% שולח את כל ההודעות הנדרשות בעת שחזור FSM של שולחן
+
 notify_system_on_restore(State) ->
-    TableId = maps:get(table_id, State),
+    TableId   = maps:get(table_id, State),
     StateName = maps:get(state_name, State),
     {GuiPos, _, _} = maps:get(table_pos, State),
 
-    % 1. עדכן את ה-GUI לגבי המצב הנוכחי
-    io:format("[table_fsm] Notifying GUI about restored table ~p in state ~p~n", [TableId, StateName]),
-    gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, table, TableId, GuiPos, StateName}}),
+    io:format("[table_fsm] Notifying GUI (restore) table ~p in state ~p~n",
+              [TableId, StateName]),
+    gen_server:cast({global, socket_server},
+                    {gui_update, update_state, table, TableId, StateName, GuiPos}),
 
-    % 2. בצע פעולות לוגיות נוספות בהתאם למצב המשוחזר
     case StateName of
-        idle ->
-            % אם השולחן היה פנוי, הודע למנהל השולחנות שהוא זמין
-            table_registry:notify_table_cleaned(TableId);
-        dirty ->
-            % אם השולחן היה מלוכלך, הודע לשחקן שצריך לנקות אותו
-            player:dirty_table_notification(TableId);
-        taken ->
-            % אם השולחן היה תפוס, הלקוח שישב בו ידאג לשחרר אותו
-            % כשהוא יתאושש, ולכן אין צורך בפעולה נוספת כאן.
-            ok
+        idle  -> table_registry:notify_table_cleaned(TableId);
+        dirty -> player:dirty_table_notification(TableId);
+        taken -> ok
     end.
+
 
 callback_mode() -> %fsm mood
     state_functions.

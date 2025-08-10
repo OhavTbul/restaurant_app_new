@@ -69,25 +69,33 @@ init({MachineId, Pos}) ->
     end.
 
 
+
 %% Sends all necessary notifications when a machine FSM is restored.
 notify_system_on_restore(State) ->
     MachineId = maps:get(machine_id, State),
     StateName = maps:get(state_name, State),
     Pos = maps:get(machine_pos, State),
 
+    %% מה להציג ב-GUI (אפשר להשאיר כמו שהיה: cooking -> busy)
     GuiStatus = case StateName of
         cooking -> busy;
         _ -> idle
     end,
 
-    io:format("[machine_fsm] Notifying GUI about restored machine ~p in state ~p~n", [MachineId, GuiStatus]),
-    gen_server:cast({global, socket_server}, {send_to_gui, {add_entity, machine, MachineId, Pos, GuiStatus}}),
+    io:format("[machine_fsm] Notifying GUI (restore) machine ~p in state ~p~n",
+              [MachineId, GuiStatus]),
+    %% UPDATE במקום ADD
+    gen_server:cast({global, socket_server},
+                    {gui_update, update_state, machine, MachineId, GuiStatus, Pos}),
+
+    %% לוגיקה משלימה
     case StateName of
         idle ->
             gen_server:cast({global, order_registry}, {machine_ready, MachineId});
         _ ->
             ok
     end.
+
 
 callback_mode() -> %fsm mood
     state_functions.
