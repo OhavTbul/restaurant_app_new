@@ -409,13 +409,71 @@ class Button:
         self.text = text
         self.color = color
         self.text_color = text_color
-        self.font = pygame.font.Font(None, 36)
-        self.text_surf = self.font.render(self.text, True, self.text_color)
+        
+        # Ensure text is a string and not empty
+        if text is None:
+            self.text = "Button"
+        elif not isinstance(text, str):
+            self.text = str(text)
+        
+        # Calculate appropriate font size based on button dimensions and text length
+        text_length = len(str(self.text))
+        if text_length > 15:
+            font_size = 24
+        elif text_length > 10:
+            font_size = 28
+        else:
+            font_size = 32
+        
+        # Try to use a system font first, fall back to default if not available
+        try:
+            # Try to use a common system font that supports more characters
+            self.font = pygame.font.SysFont('arial', font_size)
+        except:
+            # Fall back to default pygame font
+            self.font = pygame.font.Font(None, font_size)
+            
+        # Create text surface with anti-aliasing
+        self.text_surf = self.font.render(str(self.text), True, self.text_color)
+        self.text_rect = self.text_surf.get_rect(center=self.rect.center)
+        self.hover = False
+
+    def update_position(self, x, y):
+        """Update button position and recalculate text position"""
+        self.rect.centerx = x
+        self.rect.centery = y
         self.text_rect = self.text_surf.get_rect(center=self.rect.center)
 
     def draw(self, screen):
-        pygame.draw.rect(screen, self.color, self.rect, border_radius=10)
-        screen.blit(self.text_surf, self.text_rect)
+        # Draw button shadow with better depth
+        shadow_rect = pygame.Rect(self.rect.x + 4, self.rect.y + 4, self.rect.width, self.rect.height)
+        pygame.draw.rect(screen, (40, 40, 40), shadow_rect, border_radius=12)
+        
+        # Draw main button with gradient effect
+        pygame.draw.rect(screen, self.color, self.rect, border_radius=12)
+        
+        # Add beautiful border with highlight
+        pygame.draw.rect(screen, (80, 80, 80), self.rect, 3, border_radius=12)
+        pygame.draw.rect(screen, (200, 200, 200), self.rect, 1, border_radius=12)
+        
+        # Add inner highlight for 3D effect
+        highlight_rect = pygame.Rect(self.rect.x + 2, self.rect.y + 2, self.rect.width - 4, self.rect.height // 2)
+        highlight_color = tuple(min(255, c + 30) for c in self.color)
+        pygame.draw.rect(screen, highlight_color, highlight_rect, border_radius=10)
+        
+        # Create a fresh text surface each time to avoid any caching issues
+        text_surface = self.font.render(str(self.text), True, self.text_color)
+        text_rect = text_surface.get_rect(center=self.rect.center)
+        
+        # Draw the text with a subtle shadow for better readability
+        shadow_text = self.font.render(str(self.text), True, (50, 50, 50))
+        shadow_rect = text_rect.copy()
+        shadow_rect.x += 1
+        shadow_rect.y += 1
+        screen.blit(shadow_text, shadow_rect)
+        
+        # Draw the main text
+        screen.blit(text_surface, text_rect)
 
     def is_clicked(self, pos):
         return self.rect.collidepoint(pos)
@@ -435,10 +493,10 @@ class GameGUI:
         self.waiting_customers = {}
 
         # Enhanced UI buttons with beautiful styling
-        self.start_button = Button("🍽️ Start Restaurant", SCREEN_WIDTH // 2 - 120, SCREEN_HEIGHT // 2, 240, 60, GREEN, WHITE)
-        self.add_table_button = Button("🪑 Add Table", SCREEN_WIDTH - 200, 50, 160, 50, TABLE_COLOR, WHITE)
-        self.add_waiter_button = Button("👨‍💼 Add Waiter", SCREEN_WIDTH - 200, 120, 160, 50, WAITER_COLOR, WHITE)
-        self.add_machine_button = Button("🔥 Add Machine", SCREEN_WIDTH - 200, 190, 160, 50, MACHINE_COLOR, WHITE)
+        self.start_button = Button(">> Start Restaurant", SCREEN_WIDTH // 2 - 120, SCREEN_HEIGHT // 2, 240, 60, GREEN, WHITE)
+        self.add_table_button = Button("+ Add Table", SCREEN_WIDTH - 200, 50, 160, 50, TABLE_COLOR, WHITE)
+        self.add_waiter_button = Button("+ Add Waiter", SCREEN_WIDTH - 200, 120, 160, 50, WAITER_COLOR, WHITE)
+        self.add_machine_button = Button("+ Add Machine", SCREEN_WIDTH - 200, 190, 160, 50, MACHINE_COLOR, WHITE)
 
         # State management
         self.adding_entity = False
@@ -453,7 +511,6 @@ class GameGUI:
         self.cancel_upgrade_button = None
         self.clean_button = None
         self.upgrade_button = None
-        self.add_button = None
         self.selected_entity = None
         self.upgrade_level = None
         self.game_started = False
@@ -728,28 +785,60 @@ class GameGUI:
             overlay.fill((0, 0, 0, 150))
             self.screen.blit(overlay, (0, 0))
 
-            # Enhanced popup window
-            popup_rect = pygame.Rect(SCREEN_WIDTH - 400, 200, 350, 180)
-            pygame.draw.rect(self.screen, WHITE, popup_rect, border_radius=15)
-            pygame.draw.rect(self.screen, BLACK, popup_rect, 3, border_radius=15)
+            # Better positioned popup window - centered and not overlapping buttons
+            popup_width = 400
+            popup_height = 250
+            popup_x = (SCREEN_WIDTH - popup_width) // 2
+            popup_y = (SCREEN_HEIGHT - popup_height) // 2
+            
+            popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
+            
+            # Enhanced popup with better styling
+            # Shadow effect
+            shadow_rect = pygame.Rect(popup_x + 5, popup_y + 5, popup_width, popup_height)
+            pygame.draw.rect(self.screen, (50, 50, 50), shadow_rect, border_radius=20)
+            
+            # Main popup background with gradient
+            pygame.draw.rect(self.screen, (255, 255, 255), popup_rect, border_radius=20)
+            
+            # Border with highlight
+            pygame.draw.rect(self.screen, (100, 100, 100), popup_rect, 3, border_radius=20)
+            pygame.draw.rect(self.screen, (200, 200, 200), popup_rect, 1, border_radius=20)
 
-            # Popup title
-            font = pygame.font.Font(None, 32)
-            title_text = font.render(f"Add {self.selected_add_type.title()}", True, BLACK)
-            title_rect = title_text.get_rect(center=(SCREEN_WIDTH - 225, 230))
+            # Popup title with better styling
+            font = pygame.font.Font(None, 40)
+            title_text = font.render(f"Add New {self.selected_add_type.title()}", True, (50, 50, 50))
+            title_rect = title_text.get_rect(center=(popup_x + popup_width//2, popup_y + 50))
+            
+            # Title background
+            title_bg = title_rect.inflate(20, 10)
+            pygame.draw.rect(self.screen, (240, 240, 240), title_bg, border_radius=10)
+            pygame.draw.rect(self.screen, (100, 100, 100), title_bg, 2, border_radius=10)
+            
             self.screen.blit(title_text, title_rect)
 
-            # Price message
+            # Price message with better styling
             if self.add_price_message:
-                price_font = pygame.font.Font(None, 28)
-                price_surface = price_font.render(self.add_price_message, True, RED)
-                price_rect = price_surface.get_rect(center=(SCREEN_WIDTH - 225, 280))
+                price_font = pygame.font.Font(None, 32)
+                price_surface = price_font.render(self.add_price_message, True, (200, 50, 50))
+                price_rect = price_surface.get_rect(center=(popup_x + popup_width//2, popup_y + 120))
+                
+                # Price background
+                price_bg = price_rect.inflate(30, 15)
+                pygame.draw.rect(self.screen, (255, 240, 240), price_bg, border_radius=8)
+                pygame.draw.rect(self.screen, (200, 50, 50), price_bg, 2, border_radius=8)
+                
                 self.screen.blit(price_surface, price_rect)
 
-            # Buttons
+            # Enhanced buttons with better positioning
             if self.confirm_add_button:
+                # Update button position to be centered in popup
+                self.confirm_add_button.update_position(popup_x + popup_width//2 - 80, popup_y + popup_height - 60)
                 self.confirm_add_button.draw(self.screen)
+                
             if self.cancel_add_button:
+                # Update button position to be centered in popup
+                self.cancel_add_button.update_position(popup_x + popup_width//2 + 80, popup_y + popup_height - 60)
                 self.cancel_add_button.draw(self.screen)
 
     def draw_upgrade_popup(self):
@@ -758,24 +847,54 @@ class GameGUI:
             overlay.fill((0, 0, 0, 150))
             self.screen.blit(overlay, (0, 0))
 
-            popup_rect = pygame.Rect(SCREEN_WIDTH - 400, 200, 350, 180)
-            pygame.draw.rect(self.screen, WHITE, popup_rect, border_radius=15)
-            pygame.draw.rect(self.screen, BLACK, popup_rect, 3, border_radius=15)
+            # Better positioned upgrade popup - centered
+            popup_width = 400
+            popup_height = 250
+            popup_x = (SCREEN_WIDTH - popup_width) // 2
+            popup_y = (SCREEN_HEIGHT - popup_height) // 2
+            
+            popup_rect = pygame.Rect(popup_x, popup_y, popup_width, popup_height)
+            
+            # Enhanced popup with better styling
+            # Shadow effect
+            shadow_rect = pygame.Rect(popup_x + 5, popup_y + 5, popup_width, popup_height)
+            pygame.draw.rect(self.screen, (50, 50, 50), shadow_rect, border_radius=20)
+            
+            # Main popup background
+            pygame.draw.rect(self.screen, (255, 255, 255), popup_rect, border_radius=20)
+            pygame.draw.rect(self.screen, (100, 100, 100), popup_rect, 3, border_radius=20)
+            pygame.draw.rect(self.screen, (200, 200, 200), popup_rect, 1, border_radius=20)
 
-            font = pygame.font.Font(None, 32)
-            title_text = font.render("Upgrade Entity", True, BLACK)
-            title_rect = title_text.get_rect(center=(SCREEN_WIDTH - 225, 230))
+            font = pygame.font.Font(None, 40)
+            title_text = font.render("Upgrade Entity", True, (50, 50, 50))
+            title_rect = title_text.get_rect(center=(popup_x + popup_width//2, popup_y + 50))
+            
+            # Title background
+            title_bg = title_rect.inflate(20, 10)
+            pygame.draw.rect(self.screen, (240, 240, 240), title_bg, border_radius=10)
+            pygame.draw.rect(self.screen, (100, 100, 100), title_bg, 2, border_radius=10)
+            
             self.screen.blit(title_text, title_rect)
 
             if self.upgrade_price_message:
-                price_font = pygame.font.Font(None, 28)
-                price_surface = price_font.render(self.upgrade_price_message, True, RED)
-                price_rect = price_surface.get_rect(center=(SCREEN_WIDTH - 225, 280))
+                price_font = pygame.font.Font(None, 32)
+                price_surface = price_font.render(self.upgrade_price_message, True, (200, 50, 50))
+                price_rect = price_surface.get_rect(center=(popup_x + popup_width//2, popup_y + 120))
+                
+                # Price background
+                price_bg = price_rect.inflate(30, 15)
+                pygame.draw.rect(self.screen, (255, 240, 240), price_bg, border_radius=8)
+                pygame.draw.rect(self.screen, (200, 50, 50), price_bg, 2, border_radius=8)
+                
                 self.screen.blit(price_surface, price_rect)
 
+            # Enhanced buttons with better positioning
             if self.confirm_upgrade_button:
+                self.confirm_upgrade_button.update_position(popup_x + popup_width//2 - 80, popup_y + popup_height - 60)
                 self.confirm_upgrade_button.draw(self.screen)
+                
             if self.cancel_upgrade_button:
+                self.cancel_upgrade_button.update_position(popup_x + popup_width//2 + 80, popup_y + popup_height - 60)
                 self.cancel_upgrade_button.draw(self.screen)
 
     def draw_waiting_customers(self):
@@ -851,14 +970,24 @@ class GameGUI:
                 font = pygame.font.Font(None, 30)
                 if self.selected_entity and hasattr(self.selected_entity, 'level'):
                     level_text = font.render(f"Speed Level: {self.selected_entity.level}", True, WHITE)
-                    self.screen.blit(level_text, (self.upgrade_button.rect.x, self.upgrade_button.rect.y + 60))
+                    # Position level text below the upgrade button with better styling
+                    level_x = self.upgrade_button.rect.centerx
+                    level_y = self.upgrade_button.rect.bottom + 15
+                    
+                    # Create a beautiful background for the level text
+                    level_bg = pygame.Rect(level_x - 80, level_y - 8, 160, 25)
+                    pygame.draw.rect(self.screen, (50, 50, 50), level_bg, border_radius=6)
+                    pygame.draw.rect(self.screen, (100, 100, 100), level_bg, 2, border_radius=6)
+                    
+                    # Center the text in the background
+                    text_rect = level_text.get_rect(center=(level_x, level_y + 4))
+                    self.screen.blit(level_text, text_rect)
 
-            if self.add_button:
-                self.add_button.draw(self.screen)
+
         
             # Enhanced balance display with beautiful styling in lower left corner
             font = pygame.font.Font(None, 36)
-            balance_text = font.render(f"💰 Balance: ${self.balance:,}", True, WHITE)
+            balance_text = font.render(f"Balance: ${self.balance:,}", True, WHITE)
 
             # Beautiful background for balance in lower left
             balance_bg = pygame.Rect(15, SCREEN_HEIGHT - 60, balance_text.get_width() + 30, balance_text.get_height() + 15)
@@ -883,8 +1012,40 @@ class GameGUI:
         if self.add_popup_message:
             current_time = pygame.time.get_ticks()
             if current_time - self.popup_start_time < 5000:
-                msg_surface = self.font.render(self.add_popup_message, True, RED)
-                self.screen.blit(msg_surface, (SCREEN_WIDTH - 380, 330))
+                # Enhanced status message display
+                if self.add_popup_message == "add_approved":
+                    msg_text = "Entity added successfully!"
+                    msg_color = GREEN
+                elif self.add_popup_message == "not_enough_money":
+                    msg_text = "Not enough money!"
+                    msg_color = RED
+                elif self.add_popup_message == "already_exists":
+                    msg_text = "⚠️ Entity already exists!"
+                    msg_color = YELLOW
+                elif self.add_popup_message == "upgrade_approved":
+                    msg_text = "✅ Upgrade successful!"
+                    msg_color = GREEN
+                elif self.add_popup_message == "error:unknown":
+                    msg_text = "❌ Unknown error occurred!"
+                    msg_color = RED
+                else:
+                    msg_text = self.add_popup_message
+                    msg_color = RED
+                
+                # Create enhanced message display
+                msg_surface = self.font.render(msg_text, True, msg_color)
+                msg_rect = msg_surface.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2 + 100))
+                
+                # Message background with shadow
+                msg_bg = msg_rect.inflate(40, 20)
+                shadow_bg = pygame.Rect(msg_bg.x + 3, msg_bg.y + 3, msg_bg.width, msg_bg.height)
+                pygame.draw.rect(self.screen, (50, 50, 50), shadow_bg, border_radius=10)
+                
+                # Main background
+                pygame.draw.rect(self.screen, WHITE, msg_bg, border_radius=10)
+                pygame.draw.rect(self.screen, msg_color, msg_bg, 3, border_radius=10)
+                
+                self.screen.blit(msg_surface, msg_rect)
             else:
                 self.add_popup_message = None
 
@@ -1000,8 +1161,13 @@ class GameGUI:
                     self.selected_add_type = entity_type
                     self.add_price = price
                     self.add_price_message = f"Add {entity_type} will cost {price}$"
-                    self.confirm_add_button = Button(f"Add {entity_type}", SCREEN_WIDTH - 200, 260, 150, 50, GREEN, BLACK)
-                    self.cancel_add_button = Button("Cancel", SCREEN_WIDTH - 370, 260, 150, 50, RED, BLACK)
+                    
+                    # Create better positioned buttons with improved colors and text
+                    button_text = f"Add {entity_type}"
+                    # Use a darker green for better contrast with white text
+                    button_color = (0, 150, 0)  # Darker green
+                    self.confirm_add_button = Button(button_text, 0, 0, 150, 50, button_color, WHITE)
+                    self.cancel_add_button = Button("Cancel", 0, 0, 150, 50, RED, WHITE)
 
                 elif command == "add_approved":
                     self.popup_start_time = pygame.time.get_ticks() 
@@ -1035,8 +1201,12 @@ class GameGUI:
                     price = int(parts[3])
                     self.upgrading_entity = True
                     self.upgrade_price_message = f"Upgrade {entity_type} will cost {price}$"
-                    self.confirm_upgrade_button = Button("Upgrade", SCREEN_WIDTH - 200, 260, 150, 50, GREEN, BLACK)
-                    self.cancel_upgrade_button = Button("Cancel", SCREEN_WIDTH - 370, 260, 150, 50, RED, BLACK)
+                    
+                    # Create better positioned buttons with improved colors and text
+                    # Use a darker blue for better contrast with white text
+                    button_color = (0, 100, 200)  # Darker blue
+                    self.confirm_upgrade_button = Button("Confirm Upgrade", 0, 0, 150, 50, button_color, WHITE)
+                    self.cancel_upgrade_button = Button("Cancel", 0, 0, 150, 50, RED, WHITE)
 
                 elif command == "upgrade_approved":
                     self.popup_start_time = pygame.time.get_ticks()
@@ -1210,7 +1380,6 @@ class GameGUI:
                             self.confirm_upgrade_button = None
                             self.cancel_upgrade_button = None
                             self.upgrade_price_message = ""
-                            self.add_button = None
 
                         elif self.cancel_upgrade_button and self.cancel_upgrade_button.is_clicked(pos):
                             print("Upgrade cancelled")
@@ -1218,7 +1387,6 @@ class GameGUI:
                             self.confirm_upgrade_button = None
                             self.cancel_upgrade_button = None
                             self.upgrade_price_message = ""
-                            self.add_button = None
 
                     else:
                         # Handle game interactions
@@ -1259,7 +1427,6 @@ class GameGUI:
             print(f"Requesting upgrade price for {self.selected_entity.type}")
             self.send_get_price_message(self.selected_entity.type, "upgrade")
             self.selected_add_type = self.selected_entity.type
-            self.add_button = Button("Confirm Upgrade", 200, 100, 180, 50, YELLOW, BLACK)
             self.upgrade_button = None
             return
 
@@ -1270,11 +1437,25 @@ class GameGUI:
 
                 # Create clean button only if table is dirty
                 if entity.type == 'table' and entity.is_dirty:
-                    self.clean_button = Button("Clean Table", 200, 260, 150, 50, GREEN, WHITE)
+                    # Create a better clean button with improved styling
+                    clean_text = "Clean Table"
+                    # Use a beautiful green color for clean buttons
+                    button_color = (34, 139, 34)  # Forest green
+                    # Position the button in a better location - left side of screen
+                    button_x = 50
+                    button_y = 200
+                    self.clean_button = Button(clean_text, button_x, button_y, 180, 60, button_color, WHITE)
 
                 # Create upgrade button only for waiter/machine
                 elif entity.type in ('waiter', 'machine'):
-                    self.upgrade_button = Button(f"Upgrade {entity.type}", 10, 10, 150, 50, YELLOW, BLACK)
+                    # Create a better upgrade button with improved text and colors
+                    upgrade_text = f"Upgrade {entity.type.title()}"
+                    # Use a beautiful gold color for upgrade buttons
+                    button_color = (218, 165, 32)  # Golden rod
+                    # Position the button in a better location - right side of screen
+                    button_x = SCREEN_WIDTH - 200
+                    button_y = 260
+                    self.upgrade_button = Button(upgrade_text, button_x, button_y, 180, 60, button_color, BLACK)
                     self.send_get_level_and_display(entity.type, entity.id)
 
                 return
@@ -1284,7 +1465,6 @@ class GameGUI:
         self.clean_button = None
         self.upgrade_button = None
         self.upgrade_level = None
-        self.add_button = None
 
 
 
@@ -1425,10 +1605,26 @@ class GameGUI:
                     self.selected_add_type = entity_type
                     self.add_price = price
                     self.add_price_message = f"Add {entity_type} will cost {price}$"
-                    self.confirm_add_button = Button(f"Add {entity_type}", SCREEN_WIDTH - 200, 260, 150, 50, GREEN, BLACK)
-                    self.cancel_add_button = Button("Cancel", SCREEN_WIDTH - 370, 260, 150, 50, RED, BLACK)
+                    
+                    # Create better positioned buttons with improved colors and text
+                    button_text = f"Add {entity_type}"
+                    # Use a darker green for better contrast with white text
+                    button_color = (0, 150, 0)  # Darker green
+                    self.confirm_add_button = Button(button_text, 0, 0, 150, 50, button_color, WHITE)
+                    self.cancel_add_button = Button("Cancel", 0, 0, 150, 50, RED, WHITE)
 
-                # --- תשובה על ניסיון הוספה ---
+                elif command == 'show_upgrade_button':
+                    entity_type = parts[2]
+                    price = int(parts[3])
+                    self.upgrading_entity = True
+                    self.upgrade_price_message = f"Upgrade {entity_type} will cost {price}$"
+                    
+                    # Create better positioned buttons with improved colors and text
+                    # Use a darker blue for better contrast with white text
+                    button_color = (0, 100, 200)  # Darker blue
+                    self.confirm_upgrade_button = Button("Confirm Upgrade", 0, 0, 150, 50, button_color, WHITE)
+                    self.cancel_upgrade_button = Button("Cancel", 0, 0, 150, 50, RED, WHITE)
+
                 elif command == "add_approved":
                     self.popup_start_time = pygame.time.get_ticks() 
                     self.add_popup_message = "add_approved"
@@ -1455,14 +1651,6 @@ class GameGUI:
                     self.upgrading_entity = False
                     self.confirm_upgrade_button = None
                     self.cancel_upgrade_button = None
-
-                elif command == 'show_upgrade_button':
-                    entity_type = parts[2]
-                    price = int(parts[3])
-                    self.upgrading_entity = True
-                    self.upgrade_price_message = f"Upgrade {entity_type} will cost {price}$"
-                    self.confirm_upgrade_button = Button("Upgrade", SCREEN_WIDTH - 200, 260, 150, 50, GREEN, BLACK)
-                    self.cancel_upgrade_button = Button("Cancel", SCREEN_WIDTH - 370, 260, 150, 50, RED, BLACK)
 
                 elif command == "upgrade_approved":
                     self.popup_start_time = pygame.time.get_ticks()
