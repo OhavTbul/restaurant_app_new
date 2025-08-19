@@ -148,6 +148,15 @@ The game is configured to run on localhost (`127.0.0.1`) by default. To run on d
 2. Ensure firewall rules allow Erlang communication
 3. Use the same cookie across all nodes
 
+**NOTE**: If you're working on physically different nodes (separate machines), you'll need to change all instances of `127.0.0.1` to the actual IP addresses of your machines. Using the "Replace All" function in your text editor will be very helpful since `127.0.0.1` appears in multiple files:
+
+- All the start commands in this README
+- The `run.sh` script
+- Various Erlang source files (start modules)
+- Configuration files
+
+**Example**: If your safe node is on machine `192.168.1.100`, you would replace all instances of `127.0.0.1` with `192.168.1.100` in the relevant files.
+
 ## Stopping the Game
 
 To stop the game:
