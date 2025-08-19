@@ -14,7 +14,8 @@
     do_add_table/1, do_add_waiter/1, 
     do_upgrade_machine/1, do_add_machine/1, increase_price/2,
     do_upgrade_specific_waiter/2, do_upgrade_specific_machine/2,
-    dirty_table_notification/1,clean_dirty_table/1
+    dirty_table_notification/1,clean_dirty_table/1,
+    create_tables/3, create_waiters/3, create_machines/3
 ]).
 
 
@@ -76,42 +77,137 @@ list_to_map([Coord | Rest], Counter, Map) ->
 init([]) ->
     io:format("start player~n", []),
 
-    % נניח שאנחנו רוצים למקם שולחנות החל מ־Row 5 ו־Col 5
+    % Updated positioning for column-based layout
+    % Start tables at row 5, column 5 to avoid kitchen area
     RowStart = 5,
     ColStart = 5,
-    RowGap = 3, % כל שולחן תופס 2×2 (לכן קפיצה של 3)
-    ColGap = 3,
+    RowGap = 4,  % Increased gap between rows for better spacing
+    ColGap = 6,  % Increased gap between columns to prevent overlap
 
-    % מספר שורות וטורים של שולחנות (לדוגמה 10×15)
-    NumRows = 10,
-    NumCols = 15,
+    % Number of rows and columns for table layout
+    % With 7 tables per column, we can have up to 17 columns (120/7 ≈ 17)
+    NumRows = 10,   % Each column has 7 tables
+    NumCols = 17,  % Maximum number of columns
 
-    % בונה את כל המיקומים
+    % Build all table positions using the new column-based system
     TableCoords = generate_table_coords(RowStart, ColStart, RowGap, ColGap, NumRows, NumCols, 1, []),
 
     Tmap = maps:from_list(TableCoords),
 
-    % מכונות באזור עליון
+    % Machines in upper area (kitchen)
     MachineCoords  = [ {Row, Col} || Row <- lists:seq(0, 4), Col <- lists:seq(40, 49) ],
     Mmap = list_to_map(MachineCoords , 1, #{}),
 
     {ok, #state{table_pos = Tmap, machine_pos = Mmap}}.
 
 % פונקציה רקורסיבית ליצירת רשימת מיקומים
-generate_table_coords(_, _, _, _, 0, _, _, Acc) -> Acc;
-generate_table_coords(RowStart, ColStart, RowGap, ColGap, RowCount, ColCount, ID, Acc) ->
-    Row = RowStart + RowGap * (10 - RowCount), % כל שורה בקפיצה
-    {NewAcc, NewID} = generate_table_row(Row, ColStart, ColGap, ColCount, ID, Acc),
-    generate_table_coords(RowStart, ColStart, RowGap, ColGap, RowCount - 1, ColCount, NewID, NewAcc).
 
-generate_table_row(_, _, _, 0, ID, Acc) -> {Acc, ID};
-generate_table_row(Row, ColStart, ColGap, ColCount, ID, Acc) ->
-    Col = ColStart + ColGap * (15 - ColCount),
-    TablePos = {Row, Col},                        % ימנית עליונה
-    CustomerPos = {Row, Col - 1},                 % שמאלית עליונה
-    WaiterPos = {Row + 1, Col - 1},               % שמאלית תחתונה
+% Helper function to create multiple tables
+create_tables(State, StartCount, NumTables) ->
+    create_tables_recursive(State, StartCount, NumTables, 0).
+
+create_tables_recursive(State, _StartCount, NumTables, NumTables) ->
+    State;
+create_tables_recursive(State, StartCount, NumTables, Created) ->
+    CurrentCount = StartCount + Created + 1,
+    TableId = list_to_atom("table_" ++ integer_to_list(CurrentCount)),
+    Pos = maps:get(CurrentCount, State#state.table_pos),
+    
+    case gen_server:call({global, table_mng}, {start_table, {TableId, Pos}}) of
+        ok ->
+            io:format("Table ~p added successfully~n", [TableId]),
+            NewState = State#state{table_counter = CurrentCount},
+            create_tables_recursive(NewState, StartCount, NumTables, Created + 1);
+        {error, Reason} ->
+            io:format("Failed to create table ~p: ~p~n", [TableId, Reason]),
+            State
+    end.
+
+% Helper function to create multiple waiters
+create_waiters(State, StartCount, NumWaiters) ->
+    create_waiters_recursive(State, StartCount, NumWaiters, 0).
+
+create_waiters_recursive(State, _StartCount, NumWaiters, NumWaiters) ->
+    State;
+create_waiters_recursive(State, StartCount, NumWaiters, Created) ->
+    CurrentCount = StartCount + Created + 1,
+    WaiterId = list_to_atom("waiter_" ++ integer_to_list(CurrentCount)),
+    
+    case gen_server:call({global, waiter_mng}, {start_waiter, WaiterId}) of
+        ok ->
+            io:format("Waiter ~p added successfully~n", [WaiterId]),
+            NewState = State#state{waiter_counter = CurrentCount},
+            create_waiters_recursive(NewState, StartCount, NumWaiters, Created + 1);
+        {error, Reason} ->
+            io:format("Failed to create waiter ~p: ~p~n", [WaiterId, Reason]),
+            State
+    end.
+
+% Helper function to create multiple machines
+create_machines(State, StartCount, NumMachines) ->
+    create_machines_recursive(State, StartCount, NumMachines, 0).
+
+create_machines_recursive(State, _StartCount, NumMachines, NumMachines) ->
+    State;
+create_machines_recursive(State, StartCount, NumMachines, Created) ->
+    CurrentCount = StartCount + Created + 1,
+    MachineId = list_to_atom("machine_" ++ integer_to_list(CurrentCount)),
+    Pos = maps:get(CurrentCount, State#state.machine_pos),
+    
+    case gen_server:call({global, machine_mng}, {start_cook, {MachineId, Pos}}) of
+        ok ->
+            io:format("Machine ~p added successfully~n", [MachineId]),
+            NewState = State#state{machine_counter = CurrentCount},
+            create_machines_recursive(NewState, StartCount, NumMachines, Created + 1);
+        {error, Reason} ->
+            io:format("Failed to create machine ~p: ~p~n", [MachineId, Reason]),
+            State
+    end.
+
+% New column-based table positioning system
+% Each column will have 7 tables, and new columns are created after the 7th table
+generate_table_coords(RowStart, ColStart, RowGap, ColGap, NumRows, NumCols, ID, Acc) ->
+    io:format("Generating table coordinates with column-based layout~n"),
+    io:format("RowStart: ~p, ColStart: ~p, RowGap: ~p, ColGap: ~p~n", [RowStart, ColStart, RowGap, ColGap]),
+    Result = generate_table_coords_by_columns(RowStart, ColStart, RowGap, ColGap, NumRows, NumCols, ID, Acc, 1),
+    io:format("Generated ~p table positions~n", [length(Result)]),
+    Result.
+
+% Generate tables column by column, with 7 tables per column
+generate_table_coords_by_columns(_, _, _, _, _, _, ID, Acc, _) when ID > 120 -> 
+    io:format("Reached maximum table limit (120)~n"),
+    Acc;
+generate_table_coords_by_columns(RowStart, ColStart, RowGap, ColGap, NumRows, NumCols, ID, Acc, Column) ->
+    % Calculate column position (each column is separated by ColGap)
+    Col = ColStart + (Column - 1) * ColGap,
+    io:format("Generating column ~p at position ~p~n", [Column, Col]),
+    
+    % Generate 7 tables for this column
+    {NewAcc, NewID} = generate_tables_in_column(RowStart, Col, RowGap, ID, Acc, 1, 7),
+    
+    % Continue with next column if we have more tables
+    generate_table_coords_by_columns(RowStart, ColStart, RowGap, ColGap, NumRows, NumCols, NewID, NewAcc, Column + 1).
+
+% Generate tables within a single column
+generate_tables_in_column(_, _, _, ID, Acc, RowNum, MaxRows) when RowNum > MaxRows -> 
+    io:format("Completed column with ~p tables, next ID: ~p~n", [MaxRows, ID]),
+    {Acc, ID};
+generate_tables_in_column(RowStart, Col, RowGap, ID, Acc, RowNum, MaxRows) ->
+    % Calculate row position within the column
+    Row = RowStart + (RowNum - 1) * RowGap,
+    
+    % Create table positions for this table
+    TablePos = {Row, Col},                        % Table position
+    CustomerPos = {Row, Col - 1},                 % Customer position (left of table)
+    WaiterPos = {Row + 1, Col - 1},               % Waiter position (below customer)
+    
+    % Create entry for this table
     Entry = {ID, {TablePos, CustomerPos, WaiterPos}},
-    generate_table_row(Row, ColStart, ColGap, ColCount - 1, ID + 1, [Entry | Acc]).
+    io:format("Table ~p: Table(~p,~p), Customer(~p,~p), Waiter(~p,~p)~n", 
+              [ID, Row, Col, Row, Col-1, Row+1, Col-1]),
+    
+    % Continue with next row in this column
+    generate_tables_in_column(RowStart, Col, RowGap, ID + 1, [Entry | Acc], RowNum + 1, MaxRows).
 
 
 handle_call(rquest_start_game, _From, State) ->
@@ -130,43 +226,17 @@ handle_call(rquest_start_game, _From, State) ->
             Tcount = State#state.table_counter,
             Wcount = State#state.waiter_counter,
             Mcount = State#state.machine_counter,
-            Table1 = list_to_atom("table_" ++ integer_to_list(Tcount + 1)),
-            PosT1 = maps:get(Tcount + 1, State#state.table_pos),
-            PosT2 = maps:get(Tcount + 2, State#state.table_pos),
-            PosM1 = maps:get(Mcount + 1, State#state.machine_pos),
-            Table2 = list_to_atom("table_" ++ integer_to_list(Tcount + 2)),
-            Mchine1 = list_to_atom("machine_" ++ integer_to_list(Mcount + 1)),
-            Waiter1 = list_to_atom("waiter_" ++ integer_to_list(Wcount + 1)),
             
-            case gen_server:call({global, table_mng}, {start_table, {Table1, PosT1}}) of
-                ok ->
-                    io:format("Table ~p added successfully~n", [Table1]),
-                    State1 = State#state{table_counter = Tcount + 1},
-                    case gen_server:call({global, table_mng}, {start_table, {Table2, PosT2}}) of
-                        ok ->
-                            io:format("Table ~p added successfully~n", [Table2]),
-                            State2 = State1#state{table_counter = Tcount + 2},
-                            case gen_server:call({global, waiter_mng}, {start_waiter, Waiter1}) of
-                                ok ->
-                                    io:format("waiter ~p added successfully~n", [Waiter1]),
-                                    State3 = State2#state{waiter_counter = Wcount + 1},
-                                    case gen_server:call({global, machine_mng}, {start_cook, {Mchine1, PosM1}}) of
-                                        ok ->
-                                            io:format("machine ~p added successfully~n", [Mchine1]),
-                                            State4 = State3#state{machine_counter = Mcount + 1},
-                                            {reply, ok, State4};
-                                        {error, Reason} ->
-                                            {reply, {error, Reason}, State3}
-                                    end;
-                                {error, Reason} ->
-                                    {reply, {error, Reason}, State2}
-                            end;
-                        {error, Reason} ->
-                            {reply, {error, Reason}, State1}
-                    end;
-                {error, Reason} ->
-                    {reply, {error, Reason}, State}
-            end
+            % Create 5 tables
+            State1 = create_tables(State, Tcount, 5),
+            
+            % Create 3 waiters
+            State2 = create_waiters(State1, Wcount, 3),
+            
+            % Create 2 machines
+            State3 = create_machines(State2, Mcount, 2),
+            
+            {reply, ok, State3}
     end;
 
 
