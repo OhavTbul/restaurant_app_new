@@ -2,6 +2,9 @@
 
 This document provides detailed instructions on how to set up and run the restaurant game distributed across multiple Erlang nodes.
 
+## 🎥 Project Demo
+[![Watch the video](https://img.youtube.com/vi/QTKIhOuWWZQ/0.jpg)](https://youtu.be/QTKIhOuWWZQ)
+
 ## Prerequisites
 
 Before running the game, ensure you have the following installed on your system:
