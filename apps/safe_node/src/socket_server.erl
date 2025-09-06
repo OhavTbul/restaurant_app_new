@@ -3,7 +3,7 @@
 
 -export([start_link/0, send_to_gui/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
--export([socket_handler/1]). % פונקציית היצוא החדשה
+-export([socket_handler/1]). % New export function
 
 start_link() ->
     gen_server:start_link({global, ?MODULE}, ?MODULE, [], []).
@@ -45,7 +45,7 @@ handle_call(_Request, _From, State) ->
 
 handle_cast({new_connection, Socket}, State) ->
     io:format("[socket_server] New connection accepted. Storing socket: ~p~n", [Socket]),
-    % יוצר תהליך ייעודי שיטפל בקבלת הודעות מהסוקט הזה
+    % Create dedicated process to handle messages from this socket
     spawn_link(fun() -> socket_handler(Socket) end),
     {noreply, State#{socket => Socket}};
 
@@ -73,7 +73,7 @@ handle_cast({gui_update, update_state, Type, Id, State, {X, Y}}, ServerState = #
 
 
 handle_cast({tcp_data, Data}, State) ->
-    % הודעה שמגיעה מהתהליך החדש, עם נתוני ה-TCP
+    % Message from new process with TCP data
     io:format("[socket_server] Received data from handler process.~n", []),
     %Message = binary_to_list(Data),
     Message = Data,
@@ -101,7 +101,7 @@ handle_cast(_Request, State) ->
 terminate(_Reason, _State) -> ok.
 code_change(_Old, State, _Extra) -> {ok, State}.
 
-% הפונקציה החדשה שמקבלת הודעות באופן יזום
+% New function that receives messages proactively
 socket_handler(Socket) ->
     case gen_tcp:recv(Socket, 0) of
         {ok, Data} ->
@@ -116,7 +116,7 @@ socket_handler(Socket) ->
     end.
 
 
-% פונקציית עזר למנוע כפל קוד (שונתה כדי לקבל Data)
+% Helper function to avoid code duplication (modified to receive Data)
 handle_tcp_message(Socket, State, Tokens) ->
     case Tokens of
         [Target, "get_level", Id] ->
@@ -152,7 +152,7 @@ handle_tcp_message(Socket, State, Tokens) ->
     end.
 
 
-% פונקציות עזר לטיפול בבקשות מה-GUI
+% Helper functions for handling GUI requests
 handle_get_level(Socket, State, TargetAtom, IdAtom) ->
     {ok, Level} = apply(TargetAtom, get_level, [IdAtom]),
     gen_tcp:send(Socket, list_to_binary(io_lib:format("~p", [Level]))),

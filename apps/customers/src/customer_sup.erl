@@ -21,7 +21,7 @@ start_link() -> %start sup
 
 init([]) ->
     io:format("[customer_sup] init/1 started~n"),
-    % יצירת טבלת ETS מקומית
+    % Create local ETS table
     case ets:info(?TABLE_STATE) of
         undefined ->
             ets:new(?TABLE_STATE, [named_table, public, set, {read_concurrency, true}]),
@@ -30,7 +30,7 @@ init([]) ->
             ok
     end,
 
-    % בקשת שחזור מהבקר המרכזי
+    % Request restoration from central controller
     io:format("[customer_sup] Attempting to restore state from safe_node...~n"),
     {ok, RestoredData} = case gen_server:call({global, state_controller}, {get_full_state, customers}, 30000) of
         {ok, Data} when is_list(Data) ->
@@ -44,20 +44,20 @@ init([]) ->
             {ok, Data};
         Error ->
             io:format("[customer_sup] Could not restore state from safe_node: ~p~n", [Error]),
-            {ok, []} % במקרה של שגיאה, נמשיך עם רשימה ריקה
+            {ok, []} % In case of error, continue with empty list
     end,
 
-    % הגדרת ילד המנהל, עם המידע המשוחזר
+    % Define manager child, with restored data
     MngSpec = {
         customer_mng,
-        {customer_mng, start_link, [RestoredData]}, % העברת הרשימה כארגומנט
+        {customer_mng, start_link, [RestoredData]}, % Pass the list as argument
         transient, 
         5000,
         worker,
         [customer_mng]
     },
 
-    %הפעלה מחדש של כל הלקוחות שנשמרו
+    % Restart all saved customers
     ChildSpecs = [
         { {customer_fsm, CustomerId}, {customer_fsm, start_link, [CustomerId]}, transient, 5000, worker, [customer_fsm] }
         || {CustomerId, _} <- RestoredData

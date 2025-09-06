@@ -26,19 +26,19 @@ start_link(ClientId) -> % Create and start a new customer FSM with given ID
     gen_statem:start_link({global, {customer_fsm, ClientId}}, ?MODULE, ClientId, []).
 
 assign_table(ClientId, TableId) -> %sending msg to customer fsm - got table
-    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % Build process name from ID
     gen_statem:cast({global, Name}, {assign_table, TableId}).
 
 place_order(ClientId, MenuItem) -> %sending msg to customer fsm - ordered
-    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % Build process name from ID
     gen_statem:cast({global,Name}, {order, MenuItem}).
 
 done_eating(ClientId) -> %sending msg to customer fsm - done eating
-    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % Build process name from ID
     gen_statem:cast({global,Name}, done_eating).
 
 pay(ClientId) -> %sending msg to customer fsm - done paing
-    Name = {?MODULE, ClientId}, % בניית שם התהליך מה-ID
+    Name = {?MODULE, ClientId}, % Build process name from ID
     gen_statem:cast({global,Name}, paid).
 
 receive_order(ClientId, _Order) ->
@@ -70,7 +70,7 @@ init(ClientId) ->
                     {ok, StateName, UpdatedState}
             end;
 
-        %% התחלה חדשה
+        %% New start
         [] ->
             io:format("Customer ~p entered and waiting for table.~n", [ClientId]),
             gen_server:cast({global, table_registry}, {request_table, ClientId}),
@@ -111,8 +111,8 @@ notify_system_on_restore(State) ->
             case maps:find(table, State) of
                 {ok, TableId} ->
                     io:format("[customer_fsm] Restored in 'leaving'. Re-sending free_table to ~p.~n", [TableId]),
-                    % הערה: כאן אפשר להחליט אם לשלוח free_table או free_table_timeout
-                    % תלוי בלוגיקה העסקית. free_table הוא בטוח יותר.
+                    % Note: Here we can decide whether to send free_table or free_table_timeout
+                    % Depending on business logic. free_table is safer.
                     gen_statem:cast({global, {table_fsm, TableId}}, {free_table, ClientId});
                 error -> ok
             end;
@@ -238,9 +238,9 @@ eating(info, heartbeat_tick, State) ->
 eating(state_timeout, done_eating, State) ->
     CustomerId = maps:get(client_id, State),
     io:format("Customer ~p finished eating (timeout)~n", [CustomerId]),
-    % שלח לעצמך הודעת 'paid' כדי להגיע למצב paying ולשחרר שולחן משם
-    gen_statem:cast(self(), paid), % <--- שינוי קריטי!
-    io:format("Customer ~p sent 'paid' message to self after eating.~n", [CustomerId]), % <--- הודעת דיבוג
+    % Send yourself a 'paid' message to reach the paying state and release the table from there
+    gen_statem:cast(self(), paid), % <--- Critical change!
+    io:format("Customer ~p sent 'paid' message to self after eating.~n", [CustomerId]), % <--- Debug message
     NewState = State#{state_name => paying},
     send_heartbeat(NewState),
     {next_state, paying, NewState};
@@ -261,7 +261,7 @@ paying(cast, paid, State) ->
     ClientId = maps:get(client_id, State),
     TableId = maps:get(table, State),
     io:format("Customer ~p paid. Leaving.~n", [ClientId]),
-    % שלח הודעה רק אם הלקוח אכן הושיב בשולחן
+    % Send message only if the customer was indeed seated at a table
     case TableId of
         undefined ->
             io:format("Customer ~p paid and leaving without assigned table.~n", [ClientId]);
@@ -290,10 +290,10 @@ leaving(_Type, _Event, State) ->
 
 
 handle_info(heartbeat_tick, State) ->
-    send_heartbeat(State), % שליחה נכונה
+    send_heartbeat(State), % Correct sending
     {noreply, State};
 
-handle_info(Msg, State) -> % טיפול בהודעות info אחרות אם יהיו
+handle_info(Msg, State) -> % Handle other info messages if any
     io:format("[customer_fsm] Customer ~p received unexpected info message: ~p in state ~p~n",
               [maps:get(client_id, State), Msg, maps:get(state_name, State, unknown)]),
     {noreply, State}.

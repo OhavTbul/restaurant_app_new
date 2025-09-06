@@ -100,7 +100,7 @@ init([]) ->
 
     {ok, #state{table_pos = Tmap, machine_pos = Mmap}}.
 
-% פונקציה רקורסיבית ליצירת רשימת מיקומים
+% Recursive function to create list of positions
 
 % Helper function to create multiple tables
 create_tables(State, StartCount, NumTables) ->
@@ -213,16 +213,16 @@ generate_tables_in_column(RowStart, Col, RowGap, ID, Acc, RowNum, MaxRows) ->
 handle_call(rquest_start_game, _From, State) ->
     io:format("Player starting customers application remotely...~n"),
     
-    % מנסה להתחיל את היישום על צומת הלקוחות
+    % Try to start the application on the customers node
     Result = rpc:call('customers_node@127.0.0.1', application, start, [customers]),
     
-    % בודק האם הקריאה נכשלה
+    % Check if the call failed
     if
         Result =/= ok ->
             io:format("ERROR: Failed to start customers application: ~p~n", [Result]),
             {reply, {error, failed_to_start_customers}, State};
         true ->
-            % אם הצליח, ממשיך לשאר הלוגיקה
+            % If successful, continue with the rest of the logic
             Tcount = State#state.table_counter,
             Wcount = State#state.waiter_counter,
             Mcount = State#state.machine_counter,

@@ -41,7 +41,7 @@ start_link(WaiterId) ->
     Name = {?MODULE, WaiterId},
     gen_statem:start_link({global, Name}, ?MODULE, WaiterId, []). 
 
-% עדכון החתימה והגוף של הפונקציה
+% Update function signature and body
 take_order(WaiterId, TableId, ClientId) ->
     Name = {?MODULE, WaiterId},
     TaskMap = #{
@@ -51,7 +51,7 @@ take_order(WaiterId, TableId, ClientId) ->
     },
     gen_statem:cast({global, Name}, {task, TaskMap}).
 
-% עדכון החתימה והגוף של הפונקציה
+% Update function signature and body
 serve_meal(WaiterId, TableId, ClientId, Meal) ->
     Name = {?MODULE, WaiterId},
     TaskMap = #{
@@ -95,7 +95,7 @@ init(WaiterId) ->
                     {ok, pick_up_meal, State, {state_timeout, WalkTime, wait_to_serve}};
 
                 serving ->
-                    % אם כבר היינו בתהליך ההגשה, נפעיל את הטיימר המלא של ההגשה
+                    % If we were already in the serving process, activate the full serving timer
                     ServeTime = get_adjusted_time(serve, SpeedLevel),
                     {ok, serving, State, {state_timeout, ServeTime, total_time}};
 
@@ -135,11 +135,11 @@ notify_system_on_restore(State) ->
         _    -> busy
     end,
 
-    %% עדכון ה-GUI בפורמט UPDATE (עם Pos כדי לאפשר upsert אם חסר)
+    %% Update GUI in UPDATE format (with Pos to allow upsert if missing)
     gen_server:cast({global, socket_server},
                     {gui_update, update_state, waiter, WaiterId, GuiStatus, Pos}),
 
-    %% הודעה למנהל המשימות אם המלצר פנוי
+    %% Message to task manager if waiter is available
     case StateName of
         idle ->
             gen_server:cast({global, task_registry}, {waiter_ready, WaiterId});
@@ -164,7 +164,7 @@ handle_info(heartbeat_tick, State) ->
     {keep_state, State};
 
 handle_info(Msg, State) -> % Catch-all for other info messages
-    % ** תיקון **: החלף את הקריאה שגרמה לקריסה בקריאה בטוחה
+    % ** Fix **: Replace the call that caused the crash with a safe call
     io:format("[waiter_fsm] Waiter ~p received unexpected info message: ~p in state ~p~n",
     io:format("[waiter_fsm] Waiter ~p received unexpected info message: ~p in state ~p~n",
               [maps:get(waiter_id, State), Msg, gen_statem:which_state(self())]),
@@ -297,7 +297,7 @@ send_order(cast, {client_order, Order}, State) ->
     {next_state, idle, NewState};
 
 
-%% טיפול במצב שהלקוח לא ענה בזמן
+%% Handle the case where the customer didn't respond in time
 send_order(state_timeout, customer_reply_timeout, State) ->
     WaiterId = maps:get(waiter_id, State),
     TableId = maps:get(current_table_id, State),

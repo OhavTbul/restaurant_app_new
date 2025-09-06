@@ -26,7 +26,7 @@ start_link() -> %create sup
 % in apps/tables/src/table_sup.erl
 
 init([]) ->
-    % יצירת טבלת ETS מקומית
+    % Create local ETS table
     case ets:info(?TABLE) of
         undefined ->
             ets:new(?TABLE, [named_table, public, set, {read_concurrency, true}]),
@@ -35,7 +35,7 @@ init([]) ->
             ok
     end,
 
-    % בקשת שחזור מהבקר המרכזי
+    % Request restoration from central controller
     io:format("[table_sup] Attempting to restore state from safe_node...~n"),
     case gen_server:call({global, state_controller}, {get_full_state, tables}, 30000) of
         {ok, RestoredData} when is_list(RestoredData) ->
@@ -50,7 +50,7 @@ init([]) ->
             io:format("[table_sup] Could not restore state from safe_node: ~p~n", [Error])
     end,
 
-    % הגדרת ילדים קבועים 
+    % Define permanent children 
     MngSpec = {
         table_mng,
         {table_mng, start_link, []},
@@ -68,16 +68,16 @@ init([]) ->
         [table_registry]
     },
 
-    %הפעלה מחדש של כל השולחנות שנשמרו
+    % Restart all saved tables
     AllRestoredTables = ets:tab2list(?TABLE),
         TableChildSpecs = [
-            % קולט את המפה המלאה של מצב השולחן
+            % Capture the complete table state map
             { {table_fsm, TableId}, {table_fsm, start_link, [{TableId, maps:get(table_pos, StateMap)}]}, transient, 5000, worker, [table_fsm] }
-            % מריץ לולאה על כל רשומת ETS, שצורתה {TableId, StateMap}
+            % Run loop on each ETS record, which has the form {TableId, StateMap}
             || {TableId, StateMap} <- AllRestoredTables
         ],
 
-    %הרכבת הרשימה הסופית של כל הילדים
+    % Assemble the final list of all children
     ChildSpecs = [MngSpec, RegistrySpec | TableChildSpecs],
 
     {ok, {{one_for_one, 5, 10}, ChildSpecs}}.
@@ -141,7 +141,7 @@ stop(_State) ->
 %%%===================================================================
 start_restored_fsm(StateList) ->
     lists:foreach(fun({TableId, StateMap}) ->
-        StateName = maps:get(state, StateMap, idle), % ברירת מחדל: idle
+        StateName = maps:get(state, StateMap, idle), % Default: idle
         case gen_statem:start({global, {table_fsm, TableId}}, table_fsm, 
                               {restore, TableId, StateName, StateMap}, []) of
             {ok, Pid} ->

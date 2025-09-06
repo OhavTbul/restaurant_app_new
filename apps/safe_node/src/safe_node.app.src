@@ -5,7 +5,7 @@
   {registered, []},
   {mod, {safe_node_sup, []}},
   {applications, [kernel, stdlib]},
-    {env, [ % <--- שינוי כאן
+    {env, [
     {nodes_to_manage, [
         'tables_node@127.0.0.1',
         'customers_node@127.0.0.1',

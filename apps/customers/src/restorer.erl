@@ -6,23 +6,23 @@
 %% Its job is to start the ENTIRE APPLICATION for the given entity type.
 %%
 restore_node(EntityType) ->
-    % 1. תרגם את סוג הישות לשם האפליקציה המתאימה
-    %    (למשל, customers -> customers)
-    %    במקרה שלנו, השמות זהים, אז זה פשוט.
+    % 1. Translate entity type to appropriate application name
+    %    (e.g., customers -> customers)
+    %    In our case, the names are identical, so it's simple.
     AppName = EntityType,
     
     io:format("[Restorer on ~p] Received command. Attempting to start application '~p'...~n", [node(), AppName]),
     
-    % 2. הפעל את האפליקציה כולה.
-    %    זו הפקודה הנכונה. היא תדאג להפעיל את ה-supervisor וכל מה שצריך.
+    % 2. Start the entire application.
+    %    This is the correct command. It will take care of starting the supervisor and everything needed.
     case application:ensure_all_started(AppName) of
         {ok, _StartedApps} ->
             io:format("[Restorer] Successfully started application '~p'.~n", [AppName]);
 
         {error, {AppName, {already_started, AppName}}} ->
-            % זה קורה אם אנחנו מנסים לשחזר ישות שכבר רצה על ה-node.
-            % למשל, אם ה-waiters_node מקבל הוראה לשחזר את waiters.
-            % זה תקין לחלוטין.
+            % This happens if we try to restore an entity that is already running on the node.
+            % For example, if the waiters_node receives an order to restore waiters.
+            % This is completely normal.
             io:format("[Restorer] Application '~p' was already running. No action taken.~n", [AppName]);
 
         {error, Reason} ->

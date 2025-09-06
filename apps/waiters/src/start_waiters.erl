@@ -4,7 +4,7 @@
 wait_until_global(Name) ->
     case global:whereis_name(Name) of
         undefined ->
-            timer:sleep(200),  %% המתנה קצרה
+            timer:sleep(200),  %% Short wait
             wait_until_global(Name);
         Pid ->
             io:format("[waiters] Found global ~p at ~p~n", [Name, Pid]),
@@ -16,6 +16,6 @@ start() ->
     net_kernel:connect_node('customers_node@127.0.0.1'),
     net_kernel:connect_node('machines_node@127.0.0.1'),
     net_kernel:connect_node('safe_node@127.0.0.1'),
-        %% המתן עד ש-state_controller ייראה
+        %% Wait until state_controller is visible
     wait_until_global(state_controller),
     application:start(waiters).

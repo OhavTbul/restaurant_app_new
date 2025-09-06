@@ -1674,7 +1674,7 @@ class GameGUI:
                     # Display status message
                     self.display_status_message(f"Customer {customer_id} cancelled and left")
 
-                # --- אפשר להוסיף כאן הודעות אחרות לפי צורך ---
+                # --- Additional messages can be added here as needed ---
                 else:
                     print(f"[GUI] Unknown message received: {message}")
                     
@@ -1744,7 +1744,7 @@ class GameGUI:
             self.machines[new_machine.id] = new_machine
         elif entity_type == 'customer':
             state = state_info.get('state', 'idle')
-            new_customer = Customer(entity_id, pos, state)  # ⬅ מעבירים את state כמו שצריך
+            new_customer = Customer(entity_id, pos, state)  # ⬅ Pass state as needed
             self.waiting_customers[entity_id] = new_customer
             self.customers[new_customer.id] = new_customer
 
@@ -1758,14 +1758,14 @@ class GameGUI:
 
     def check_for_updates(self):
         try:
-            # קודם כל נקרא את ה-header (4 בתים) כדי לדעת את אורך ההודעה
+            # First read the header (4 bytes) to know the message length
             header = self.erlang_socket.recv(4)
             if not header or len(header) < 4:
-                return  # אין הודעה מלאה עדיין
+                return  # No complete message yet
 
             message_length = int.from_bytes(header, byteorder='big')
 
-            # עכשיו נקרא את ההודעה עצמה (body)
+            # Now read the message itself (body)
             data = b""
             while len(data) < message_length:
                 chunk = self.erlang_socket.recv(message_length - len(data))
@@ -1778,7 +1778,7 @@ class GameGUI:
                 print(f"[GUI] Received message from Erlang: {message}")
                 self.process_erlang_message(message)
         except socket.error:
-            # אין מידע כרגע - סבבה לגמרי
+            # No information currently - completely fine
             pass
 
             

@@ -43,7 +43,7 @@ handle_info(_, State) ->
 
 handle_cast(send_report, State) ->
     AllTablesData = ets:tab2list(?TABLE),
-    % שליחת המידע לבקר המרכזי
+    % Send data to central controller
     gen_server:cast({global, state_controller}, {update, tables, AllTablesData}),
     io:format("[table_mng] Sending ~p table states to SAFE NODE~n", [length(AllTablesData)]),
     {noreply, State};
@@ -51,7 +51,7 @@ handle_cast(send_report, State) ->
 handle_cast({take_over_responsibilities, EntityTypes}, State) ->
     lists:foreach(
       fun(AnEntityType) ->
-          % --> כאן נמצא ה-spawn! <--
+          % --> Here is the spawn! <--
           spawn(fun() -> restorer:restore_node(AnEntityType) end)
       end,
       EntityTypes
@@ -60,7 +60,7 @@ handle_cast({take_over_responsibilities, EntityTypes}, State) ->
 
 handle_cast({relinquish_responsibility, EntityType}, State) ->
     io:format("[~p] Received order to relinquish responsibility for '~p'. Stopping application...~n", [?MODULE, EntityType]),
-    % קורא למשחזר כדי שיכבה את האפליקציה המתאימה
+    % Call restorer to shut down the appropriate application
     restorer:stop_application(EntityType),
     {noreply, State};
 

@@ -15,7 +15,7 @@
 %%% API
 %%%===================================================================
 
-start_link(RestoredCustomers) -> % שונה ל-arity 1
+start_link(RestoredCustomers) -> % Changed to arity 1
     gen_server:start_link({global, ?MODULE}, ?MODULE, RestoredCustomers, []).
 
 send_state_to_safe() ->
@@ -48,29 +48,29 @@ handle_info(report_to_safe, State) ->
     erlang:send_after(?REPORT_INTERVAL, self(), report_to_safe),
     {noreply, State};
 
-%% Clause חדש עבור יצירת לקוחות
+%% New clause for customer creation
 handle_info(generate_customer, State) ->
-    CurrentCustomerId = maps:get(next_customer_id, State, 1), % קח את המזהה הנוכחי
-    CustomerId = CurrentCustomerId, % השתמש בו כ-ID ללקוח החדש
-    NewState = State#{next_customer_id => CurrentCustomerId + 1}, % הגדל את המונה ושמור במצב החדש
+    CurrentCustomerId = maps:get(next_customer_id, State, 1), % Take the current ID
+    CustomerId = CurrentCustomerId, % Use it as ID for the new customer
+    NewState = State#{next_customer_id => CurrentCustomerId + 1}, % Increment counter and save in new state
     
     %% Call the supervisor's API to start a new customer
     customer_sup:start_client(CustomerId),
-    io:format("[customer_mng] Generated new customer with ID: ~p~n", [CustomerId]), % <--- הודעת דיבוג
+    io:format("[customer_mng] Generated new customer with ID: ~p~n", [CustomerId]), % <--- Debug message
     
     %% Calculate next time and schedule the next event
     Lambda = 0.3,
     NextDelayMs = trunc(-math:log(rand:uniform()) / Lambda * 1000),
     erlang:send_after(NextDelayMs, self(), generate_customer),
 
-    {noreply, NewState}; % <--- החזר את המצב המעודכן
+    {noreply, NewState}; % <--- Return the updated state
 
 handle_info(_, State) ->
     {noreply, State}.
 
 handle_cast(send_report, State) ->
     AllCustomersData = ets:tab2list(?TABLE),
-    % שליחת המידע לבקר המרכזי
+    % Send data to central controller
     gen_server:cast({global, state_controller}, {update, customers, AllCustomersData}),
     io:format("[customer_mng] Sending ~p customer states to SAFE NODE~n", [length(AllCustomersData)]),
     {noreply, State};
@@ -78,7 +78,7 @@ handle_cast(send_report, State) ->
 handle_cast({take_over_responsibilities, EntityTypes}, State) ->
     lists:foreach(
       fun(AnEntityType) ->
-          % --> כאן נמצא ה-spawn! <--
+          % --> Here is the spawn! <--
           spawn(fun() -> restorer:restore_node(AnEntityType) end)
       end,
       EntityTypes
@@ -87,7 +87,7 @@ handle_cast({take_over_responsibilities, EntityTypes}, State) ->
 
 handle_cast({relinquish_responsibility, EntityType}, State) ->
     io:format("[~p] Received order to relinquish responsibility for '~p'. Stopping application...~n", [?MODULE, EntityType]),
-    % קורא למשחזר כדי שיכבה את האפליקציה המתאימה
+    % Call restorer to shut down the appropriate application
     restorer:stop_application(EntityType),
     {noreply, State};
 

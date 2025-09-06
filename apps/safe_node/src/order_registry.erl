@@ -32,7 +32,7 @@ handle_cast({machine_ready, MachineId}, State) ->
     AvailableMachines = maps:get(available_machine, State),
     io:format("[order_registry] machine ~p is available to get a order. Order queue length: ~p~n", [MachineId, queue:len(Queue)]),
     case queue:out(Queue) of
-        {{value, OrderWithId}, NewQueue} -> %% <-- שים לב לשם המשתנה
+        {{value, OrderWithId}, NewQueue} ->
             io:format("[order_registry] Assigning order ~p to machine ~p~n", [OrderWithId, MachineId]),
             gen_statem:cast({global, {machine_fsm, MachineId}}, {machine_order, OrderWithId}),
             {noreply, State#{order_queue => NewQueue}};

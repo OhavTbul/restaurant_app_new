@@ -60,7 +60,7 @@ init({MachineId, Pos}) ->
                 order_pos => Pos
             },
             
-            % *** התיקון הקריטי כאן: שמור את המצב המלא מיד עם ההתחלה ***
+            % *** Critical fix here: save the complete state immediately upon startup ***
             send_heartbeat(State),
 
             gen_server:cast({global, order_registry}, {machine_ready, MachineId}),
@@ -76,7 +76,7 @@ notify_system_on_restore(State) ->
     StateName = maps:get(state_name, State),
     Pos = maps:get(machine_pos, State),
 
-    %% מה להציג ב-GUI (אפשר להשאיר כמו שהיה: cooking -> busy)
+    %% What to display in GUI (can keep as before: cooking -> busy)
     GuiStatus = case StateName of
         cooking -> busy;
         _ -> idle
@@ -84,11 +84,11 @@ notify_system_on_restore(State) ->
 
     io:format("[machine_fsm] Notifying GUI (restore) machine ~p in state ~p~n",
               [MachineId, GuiStatus]),
-    %% UPDATE במקום ADD
+    %% UPDATE instead of ADD
     gen_server:cast({global, socket_server},
                     {gui_update, update_state, machine, MachineId, GuiStatus, Pos}),
 
-    %% לוגיקה משלימה
+    %% Complementary logic
     case StateName of
         idle ->
             gen_server:cast({global, order_registry}, {machine_ready, MachineId});
@@ -163,7 +163,7 @@ cooking(info, {cooking_done, Order}, State) ->
     % Add delivery task to waiter queue
     case Order of
         #{table_id := TableId, client_id := CustomerId, meal := Meal} ->
-            % V-- התיקון --V
+            % V-- The fix --V
             Task = #{
                 type => serve_meal, 
                 table_id => TableId, 

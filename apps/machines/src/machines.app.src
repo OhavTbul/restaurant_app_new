@@ -8,5 +8,5 @@
     stdlib
    ]},
   {env,[]},
-  {modules, [machine_sup, machine_fsm, machine_mng]} % <--- הוספת המודולים
+  {modules, [machine_sup, machine_fsm, machine_mng]} % Added modules
  ]}.

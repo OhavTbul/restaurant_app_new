@@ -24,7 +24,7 @@ start_link() -> %create sup
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    % יצירת טבלת ETS מקומית
+    % Create local ETS table
     case ets:info(?TABLE) of
         undefined ->
             ets:new(?TABLE, [named_table, public, set, {read_concurrency, true}]),
@@ -33,7 +33,7 @@ init([]) ->
             ok % Table already exists, do nothing
     end,
 
-    % בקשת שחזור מהבקר המרכזי
+    % Request restoration from central controller
     io:format("[machine_sup] Attempting to restore state from safe_node...~n"),
     case gen_server:call({global, state_controller}, {get_full_state, machines}, 30000) of
         {ok, RestoredData} when is_list(RestoredData) ->
@@ -48,7 +48,7 @@ init([]) ->
             io:format("[machine_sup] Could not restore state from safe_node: ~p~n", [Error])
     end,
 
-    % הפעלת המנהל
+    % Start manager
     MngSpec = {
         machine_mng,
         {machine_mng, start_link, []},
@@ -58,12 +58,12 @@ init([]) ->
         [machine_mng]
     },
     
-    % הפעלה מחדש של כל המכונות שנשמרו
+    % Restart all saved machines
     AllRestoredMachines = ets:tab2list(?TABLE),
     ChildSpecs = [
-        % קולט את המפה המלאה של מצב המכונה
+        % Capture the complete machine state map
         { {machine_fsm, MachineId}, {machine_fsm, start_link, [{MachineId, maps:get(machine_pos, StateMap)}]}, transient, 5000, worker, [machine_fsm] }
-        % מריץ לולאה על כל רשומת ETS, שצורתה {MachineId, StateMap}
+        % Run loop on each ETS record, which has the form {MachineId, StateMap}
         || {MachineId, StateMap} <- AllRestoredMachines
     ],
 

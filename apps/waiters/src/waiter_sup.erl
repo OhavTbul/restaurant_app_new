@@ -24,7 +24,7 @@ start_link() -> %create sup
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    % יצירת טבלת ETS מקומית
+    % Create local ETS table
     case ets:info(?TABLE) of
         undefined ->
             ets:new(?TABLE, [named_table, public, set, {read_concurrency, true}]),
@@ -33,7 +33,7 @@ init([]) ->
             ok % Table already exists, do nothing
     end,
 
-    % בקשת שחזור מהבקר המרכזי
+    % Request restoration from central controller
     io:format("[waiter_sup] Attempting to restore state from safe_node...~n"),
     case gen_server:call({global, state_controller}, {get_full_state, waiters}, 30000) of
         {ok, RestoredData} when is_list(RestoredData) ->
@@ -48,7 +48,7 @@ init([]) ->
             io:format("[waiter_sup] Could not restore state from safe_node: ~p~n", [Error])
     end,
 
-    % הפעלת הילדים 
+    % Start children 
     MngSpec = {
         waiter_mng,
         {waiter_mng, start_link, []},
@@ -58,7 +58,7 @@ init([]) ->
         [waiter_mng]
     },
     
-    % הפעלה מחדש של כל המלצרים שנשמרו
+    % Restart all saved waiters
     AllRestoredWaiters = ets:tab2list(?TABLE),
     ChildSpecs = [
         { {waiter_fsm, WaiterId}, {waiter_fsm, start_link, [WaiterId]}, transient, 5000, worker, [waiter_fsm] }

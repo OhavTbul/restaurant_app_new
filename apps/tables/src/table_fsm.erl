@@ -45,21 +45,21 @@ clean_by_player(TableId) -> gen_statem:cast({global, {?MODULE, TableId}},clean_n
 
 init({TableId, Pos}) ->
     case ets:lookup(?TABLE, TableId) of
-        %% --- כאן נמצא התיקון המלא ---
+        %% --- Here is the complete fix ---
         [{TableId, SavedState}] ->
             
             StateName = maps:get(state_name, SavedState, idle),
             io:format("[table_fsm] Restoring table ~p from ETS in state ~p ~n", [TableId, StateName]),
             CurrentState = SavedState#{table_id => TableId, pid => self(), table_pos => Pos, state_name => StateName},
 
-            % 1. שלח את כל ההודעות הנדרשות כדי לסנכרן את המערכת
+            % 1. Send all required messages to synchronize the system
             notify_system_on_restore(CurrentState),
 
-            % 2. הלוגיקה הפנימית של המצב נשארת זהה
+            % 2. The internal logic of the state remains the same
             {ok, StateName, CurrentState};
-        %% --- סוף התיקון ---
+        %% --- End of fix ---
 
-        %% התחלה חדשה (ללא שינוי)
+        %% New start (no change)
         [] ->
             io:format("[table_fsm] Table ~p starting for the first time~n", [TableId]),
             InitialState = #{table_id => TableId, pid => self(), customer_id => undefined, state_name => idle, table_pos => Pos},
@@ -172,9 +172,9 @@ dirty(info, heartbeat_tick, State) ->
 dirty(info, clean_table_timeout, State) -> %the table is clean
     TableId = maps:get(table_id, State),
     io:format("[table_fsm] Table ~p cleaned (timeout)~n", [TableId]),
-    % דווח ל-table_registry ישירות שהשולחן נקי ופנוי
-    table_registry:notify_table_cleaned(TableId), % <--- שינוי קריטי!
-    io:format("[table_fsm] Notified table_registry that table ~p is now cleaned and available.~n", [TableId]), % <--- הודעת דיבוג
+    % Report to table_registry directly that the table is clean and available
+    table_registry:notify_table_cleaned(TableId), % <--- Critical change!
+    io:format("[table_fsm] Notified table_registry that table ~p is now cleaned and available.~n", [TableId]), % <--- Debug message
     NewState = State#{state_name => idle},
     table_sup:update_table_state(TableId, NewState),
     {GuiPos, _, _} = maps:get(table_pos, NewState),

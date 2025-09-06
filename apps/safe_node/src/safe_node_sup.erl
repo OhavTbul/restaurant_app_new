@@ -6,21 +6,21 @@
 -export([start/2, stop/1]).
 
 %%%------------------------------------------------------
-%%% הפעלה של הסופרווייזור הראשי של safe_node
+%%% Main supervisor startup for safe_node
 %%%------------------------------------------------------
 
 start_link(Nodes) ->
-    % חשוב לרשום אותו בשם local כדי שה-state_controller יוכל לגשת אליו
+    % Register locally so state_controller can access it
     supervisor:start_link({local, safe_node_sup}, ?MODULE, Nodes).
 
 %%%------------------------------------------------------
-%%% אתחול התהליכים הקבועים של SAFE NODE
+%%% Initialize permanent SAFE NODE processes
 %%%------------------------------------------------------
 
 init(Nodes) ->
     io:format("[safe_node_sup] Initializing SAFE NODE supervisor...~n"),
 
-    % תהליכים קבועים של SAFE NODE
+    % Permanent SAFE NODE processes
     Children = [
         {state_controller, {state_controller, start_link, [Nodes]},
          permanent, 5000, worker, [state_controller]},
@@ -43,7 +43,7 @@ init(Nodes) ->
          
     ],
 
-    % הגדרת מדיניות השגחה - one_for_one מאפשר לנהל ילדים נוספים דינמית
+    % Supervision policy - one_for_one allows dynamic child management
     {ok, {{one_for_one, 10, 10}, Children}}.
 
 %%%===================================================================
@@ -52,10 +52,10 @@ init(Nodes) ->
 
 
 start(_StartType, _StartArgs) ->
-    % 1. קרא את רשימת ה-nodes מהסביבה שהגדרת בקובץ ה-.app
+    % 1. Read nodes list from environment defined in .app file
     case application:get_env(safe_node, nodes_to_manage) of
         {ok, NodesToManage} ->
-             % 2. קרא לפונקציית ה-start_link שלך עם הרשימה הזו
+             % 2. Call start_link with this list
             ?MODULE:start_link(NodesToManage);
         undefined ->
             io:format("ERROR: 'nodes_to_manage' not defined in .app file!~n"),
